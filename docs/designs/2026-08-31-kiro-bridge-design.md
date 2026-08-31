@@ -41,8 +41,8 @@ findings JSON으로 받는다 (ADR-003). 페이로드가 결정적이라 실패�
 ## 2. 사용 시나리오 (실사용 우선순위 순)
 
 1. **리뷰 세컨드 오피니언**: Claude가 작업을 마친 diff를 Kiro가 리뷰.
-   `/kiro:review` → findings JSON → Claude가 반영 여부 판단 (자동 적용 없음, ADR-004).
-2. **작업 위임**: 조사·디버깅을 Kiro에 위임. `/kiro:task [--bg]` → `/kiro:result`.
+   `/kiro-bridge:review` → findings JSON → Claude가 반영 여부 판단 (자동 적용 없음, ADR-004).
+2. **작업 위임**: 조사·디버깅을 Kiro에 위임. `/kiro-bridge:task [--bg]` → `/kiro-bridge:result`.
 3. **spec 파이프라인**: Kiro 네이티브 spec/planner 모드로 requirements/design
    정제 → Claude Code가 구현. (Kiro `--mode spec` 출력 형식 실측 후 설계 확정 — §10)
 4. **AWS 자문**: 인프라 코드(CDK/IAM)에 대해 `use_aws`를 읽기 전용·서비스
@@ -101,18 +101,22 @@ transport.run(payload, {
 
 | 커맨드 | Phase | 동작 | 기본 에이전트/권한 | 기본 model/effort |
 |---|---|---|---|---|
-| `/kiro:setup` | 1 | 설치·로그인 확인, 에이전트 설치 + `agent validate` | - | - |
-| `/kiro:review [ref]` | 1 | diff 컨텍스트 → findings | reviewer (읽기 신뢰) | sonnet 계열 / medium |
-| `/kiro:task <설명> [--bg] [--write]` | 2 | 작업 위임 | 기본 읽기 / `--write`→scoped 에이전트 | auto |
-| `/kiro:spec <기능>` | 2 | 네이티브 spec 모드 → `.kiro/specs/` | spec-writer | 상위 모델 / high |
-| `/kiro:result [id] [--follow-up <질문>]` | 2 | 잡 결과 회수, 세션 이어서 후속 질문 | - | - |
-| `/kiro:status` / `/kiro:cancel` | 2 | 잡 목록·누적 크레딧 / 취소 | - | - |
+| `/kiro-bridge:setup` | 1 | 설치·로그인 확인, 에이전트 설치 + `agent validate` | - | - |
+| `/kiro-bridge:review [ref]` | 1 | diff 컨텍스트 → findings | reviewer (읽기 신뢰) | sonnet 계열 / medium |
+| `/kiro-bridge:task <설명> [--bg] [--write]` | 2 | 작업 위임 | 기본 읽기 / `--write`→scoped 에이전트 | auto |
+| `/kiro-bridge:spec <기능>` | 2 | 네이티브 spec 모드 → `.kiro/specs/` | spec-writer | 상위 모델 / high |
+| `/kiro-bridge:result [id] [--follow-up <질문>]` | 2 | 잡 결과 회수, 세션 이어서 후속 질문 | - | - |
+| `/kiro-bridge:status` / `/kiro-bridge:cancel` | 2 | 잡 목록·누적 크레딧 / 취소 | - | - |
 
+- 커맨드 네임스페이스는 **플러그인 이름**이다 (`plugin.json` 의 `name`).
+  초안의 `/kiro:*` 는 플러그인 이름이 `kiro` 여야 나오므로 도달 불가였고,
+  실제 이름 `kiro-bridge` 에 맞춰 `/kiro-bridge:*` 로 정정했다
+  (확인: 설치된 플러그인 `oh-my-claudecode` + `commands/hud.md` → `/oh-my-claudecode:hud`).
 - `--trust-all-tools`가 기본값이 되는 코드 경로는 만들지 않는다 (ADR-002).
   전권은 `--yolo` 명시 + 실행 전 확인으로만.
 - model/effort는 커맨드별 기본값 + `--model`/`--effort` 오버라이드.
   호출별 크레딧 소모를 `~/.kiro-bridge/usage.jsonl`에 적재하고
-  `/kiro:status`에 누적 표시.
+  `/kiro-bridge:status`에 누적 표시.
 
 ## 5. 컨텍스트 핸드오프 (ADR-003)
 
@@ -156,7 +160,7 @@ Kiro는 `read`/`grep` 툴로 스스로 파일을 읽을 수 있으므로, `files
 
 - 모든 번들 에이전트는 `kiro-bridge-` 접두사 — 사용자 소유 공간
   (`~/.kiro/agents/`)에서의 이름 충돌 방지.
-- 에이전트 JSON에 버전 스탬프를 넣고, `/kiro:setup`이 해시 비교 →
+- 에이전트 JSON에 버전 스탬프를 넣고, `/kiro-bridge:setup`이 해시 비교 →
   사용자가 수정한 파일은 덮어쓰지 않고 경고.
 - 설치 시 `kiro-cli agent validate --path <file>` 필수 통과
   (검증: `kiro-cli agent --help`에 validate 존재).
@@ -201,7 +205,7 @@ denial detector를 둔다.
 - 백그라운드는 `detached + unref`, stdio는 파일 리다이렉트.
 - 취소는 PID 재사용 대비 job-id→PID+시작시각 대조 후 kill (ACP면 session/cancel).
 - 완료 후 30일 GC. SessionEnd 훅은 고아 프로세스 정리만 하고 잡 결과는 보존.
-- 잡 메타에 `sessionId` 저장 → `/kiro:result --follow-up`이 `session/load`로
+- 잡 메타에 `sessionId` 저장 → `/kiro-bridge:result --follow-up`이 `session/load`로
   컨텍스트 재전송 없이 후속 질문.
 
 ## 9. 평가 하네스 (포트폴리오 핵심)
@@ -215,9 +219,12 @@ precision/recall + 크레딧 + 지연을 `docs/evaluation/`에 재현 스크립�
 ## 10. 로드맵 / Open Questions
 
 - **Phase 1 — 리뷰 단일 축**: ACP transport(+subprocess 폴백) + 컨텍스트
-  빌더/redaction + reviewer 에이전트 + `/kiro:setup` `/kiro:review` +
+  빌더/redaction + reviewer 에이전트 + `/kiro-bridge:setup` `/kiro-bridge:review` +
   실패 모드 표 구현. 유닛 테스트 동반.
-- **Phase 2**: `/kiro:task`(fg/bg), 잡 수명주기, spec 파이프라인,
+  → **코드 완료 (2026-09-01), 실기기 검증 대기.** 목업 바이너리 기준 테스트
+  91건 통과. 실제 `kiro-cli` 로 1회 왕복해야 Phase 1 을 닫을 수 있다
+  (OQ 1·2·3·5·6·7). OQ4 는 설치 시점 탐침으로 코드가 스스로 해소한다.
+- **Phase 2**: `/kiro-bridge:task`(fg/bg), 잡 수명주기, spec 파이프라인,
   나머지 에이전트 3종, `--follow-up`, usage 계측.
 - **Phase 3**: 권한 브로커링 고도화(세밀한 정책), 평가 하네스 완성, 공개 준비
   (README 영/한, marketplace.json, 스트리밍 데모 캡처, private 기간 산출물
