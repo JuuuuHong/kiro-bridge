@@ -8,3 +8,7 @@
 # Node
 node_modules/
 npm-debug.log*
+
+# OMC 로컬 상태 (.omc/skills/ 는 커밋 대상이라 예외)
+.omc/*
+!.omc/skills/
