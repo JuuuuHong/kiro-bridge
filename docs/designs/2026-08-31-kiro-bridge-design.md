@@ -223,11 +223,22 @@ precision/recall + 크레딧 + 지연을 `docs/evaluation/`에 재현 스크립�
   (README 영/한, marketplace.json, 스트리밍 데모 캡처, private 기간 산출물
   전수 점검 후 public).
 
-Open Questions (각 1회 실측으로 해소, Phase 1 착수 전):
+Open Questions (각 1회 실측으로 해소):
 1. ACP `session/prompt` 실왕복 (핸드셰이크까지만 검증됨, 크레딧 소모 이슈로 보류).
 2. 기본 신뢰 툴 집합 — `read`가 기본 신뢰인지 (`autoAllowReadonly` 기본값).
 3. `--mode spec` 출력이 `.kiro/specs/` 파일인지 대화 텍스트인지.
 4. tool 정식 명칭 (`fs_read` vs `read`) — §6 참조.
+5. ACP 프레이밍이 ndjson인지 (LSP식 `Content-Length` 헤더가 아닌지).
+   `jsonrpc.mjs` 한 곳에 격리되어 있어 반증되면 그 파일만 바뀐다.
+6. `session/update` 판별자 이름 (`agent_message_chunk` 등) 및
+   `--output-format stream-json` 줄 형식이 ACP 이벤트와 동일한지.
+   `events.mjs` 의 정규화가 양쪽을 흡수하도록 되어 있다.
+7. `chat`/`acp` 서브커맨드의 `--agent`/`--model`/`--effort` 플래그 실재 여부.
+
+**착수 순서 변경 (2026-09-01)**: 원래 1~4를 Phase 1 착수 전 조건으로 뒀으나,
+실측 환경이 없는 동안 §11의 목업 기반 계층(컨텍스트·findings·transport)을
+먼저 구현했다. 실측이 가능해지면 목업 응답을 녹화 픽스처로 교체하고 위
+항목들을 확정한다 — transport 코드 자체는 바뀌지 않는 것이 설계 의도다.
 
 ## 11. 테스트 전략
 
