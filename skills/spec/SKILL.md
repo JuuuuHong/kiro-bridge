@@ -1,28 +1,31 @@
 ---
 name: spec
-description: Kiro 를 spec 작성자로 써서 기능 요구를 EARS requirements + design 문서로 정제한다. 구현 전에 요구사항을 구조화하고 싶을 때, 또는 사용자가 "spec 부터 만들자"라고 할 때 사용한다.
-argument-hint: "<기능 설명> [--model <id>] [--effort <lv>]"
+description: Use Kiro as the spec writer to refine a feature request into EARS requirements + a design document. Use before implementation when requirements need structuring, or when the user says "let's start with a spec."
+argument-hint: "<feature description> [--model <id>] [--effort <lv>]"
 ---
 
-# kiro:spec
+# kiro-bridge:spec
 
-역할 분담 파이프라인: **Kiro 가 spec 을 쓰고, Claude 가 구현한다** (설계 §2.3).
-spec-writer 에이전트는 `.kiro/specs/<슬러그>/requirements.md` 와 `design.md` 를
-생성한다. 쓰기는 그 경로로만 제한되고 셸은 미신뢰다.
+A role-split pipeline: **Kiro writes the spec, Claude implements it** (Design
+§2.3). The spec-writer agent generates
+`.kiro/specs/<slug>/requirements.md` and `design.md`. Writes are restricted
+to that path, and shell is untrusted.
 
-## 실행
+## Running it
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" spec "<기능 설명>" [flags]
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" spec "<feature description>" [flags]
 ```
 
-기본 모델은 auto 이지만 spec 은 정제 품질이 중요하므로 사용자가 원하면
-`--model` 로 상위 모델을, `--effort high` 를 권한다.
+Default model is auto, but since spec quality depends on refinement, using
+`--model` for a higher-tier model and `--effort high` is recommended.
 
-## 완료 후 워크플로 — 반드시 지킬 것
+## Post-completion workflow — follow this strictly
 
-1. `.kiro/specs/` 에 생성된 파일을 **읽는다**.
-2. 요구사항을 요약해 사용자에게 보이고 **검토를 받는다**. spec 도 외부
-   에이전트 산출물이므로 검토 없이 구현에 들어가지 않는다 (ADR-004).
-3. 검토 통과분만 구현 계획으로 옮긴다. 현재 코드와 모순되는 요구는
-   지적하고 사용자 판단을 받는다.
+1. **Read** the files generated under `.kiro/specs/`.
+2. Summarize the requirements for the user and **get their review.** Spec
+   content is also an external agent's output, so don't move into
+   implementation without review (ADR-004).
+3. Only requirements that pass review move into the implementation plan.
+   Anything that contradicts the current code should be flagged, and the
+   user's judgment sought.

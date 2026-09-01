@@ -1,14 +1,14 @@
-// 설정·능력 캐시. 상태는 모두 ~/.kiro-bridge/ 하위에 둔다 (설계 §3).
+// Config/capability cache. All state lives under ~/.kiro-bridge/ (design §3).
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
 
 const DEFAULTS = {
   version: 1,
-  // kiro-cli 버전 → 능력 감지 결과. 버전이 바뀌면 자연히 무효화된다 (ADR-001R).
+  // kiro-cli version -> capability detection result. Naturally invalidated when the version changes (ADR-001R).
   capabilities: {},
   redaction: {
-    // 아웃바운드 방어 (설계 §7). 사용자가 config.json에서 확장할 수 있다.
+    // Outbound protection (design §7). The user can extend this in config.json.
     excludeFiles: [
       '.env', '.env.*', '*.pem', '*.key', '*credentials*',
       'id_rsa', 'id_ed25519', '*.p12', '*.pfx',
@@ -31,7 +31,7 @@ export function loadConfig() {
   try {
     onDisk = JSON.parse(readFileSync(configPath(), 'utf8'))
   } catch {
-    // 없거나 깨졌으면 기본값으로 시작한다. 여기서 실패시키지 않는다.
+    // Start from defaults if the file is missing or corrupted. Never fail here.
   }
   return {
     ...DEFAULTS,
@@ -41,7 +41,7 @@ export function loadConfig() {
   }
 }
 
-// 임시파일 + rename 으로 원자적 저장. 상태 파일은 0600 (설계 §7).
+// Atomic save via tmpfile + rename. State files are 0600 (design §7).
 export function saveConfig(config) {
   const target = configPath()
   mkdirSync(dirname(target), { recursive: true, mode: 0o700 })

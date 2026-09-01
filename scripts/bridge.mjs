@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 엔트리포인트. 커맨드 라우팅만 하고 로직은 lib/ 에 둔다 (설계 §3).
+// Entry point. Only routes commands; logic lives in lib/ (design §3).
 import { review, formatSummary } from './lib/review.mjs'
 import { setup, formatSetup } from './lib/setup.mjs'
 import {
@@ -14,13 +14,13 @@ const USAGE = `kiro-bridge
 
   bridge.mjs setup  [--force]
   bridge.mjs review [ref]    [--dry-run] [--timeout <ms>] [--quiet]
-  bridge.mjs task   <목표>   [--bg] [--write] [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
-  bridge.mjs spec   <목표>   [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
-  bridge.mjs result [job-id] [--follow-up <질문>]
+  bridge.mjs task   <goal>   [--bg] [--write] [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
+  bridge.mjs spec   <goal>   [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
+  bridge.mjs result [job-id] [--follow-up <question>]
   bridge.mjs status
   bridge.mjs cancel <job-id>
 
-review/task/spec 은 결과를 자동 반영하지 않는다 — 출력은 검토용 데이터다 (ADR-004).
+review/task/spec never auto-apply their result — the output is data for review (ADR-004).
 `
 
 export function parseArgs(argv) {
@@ -43,15 +43,15 @@ export function parseArgs(argv) {
   return { command, flags }
 }
 
-// 스트리밍 진행 상황을 stderr 로 흘린다 — stdout 은 결과 전용이라
-// 상위(Claude Code)가 결과만 파싱할 수 있다.
+// Stream progress to stderr — stdout is result-only, so the caller
+// (Claude Code) can parse just the result.
 function makeReporter(quiet) {
   if (quiet) return undefined
   return (event) => {
     if (event.type === EVENT_TYPES.TOOL_CALL) {
       process.stderr.write(`  · ${event.title || 'tool'}\n`)
     } else if (event.type === EVENT_TYPES.DENIED) {
-      process.stderr.write(`  ! 툴 거부 감지\n`)
+      process.stderr.write(`  ! tool denial detected\n`)
     }
   }
 }
@@ -131,7 +131,7 @@ async function main(argv) {
     return res.ok ? 0 : 1
   }
 
-  // 내부용: task --bg 가 detached 로 재실행하는 워커 엔트리. 문서화하지 않는다.
+  // Internal: the worker entry re-exec'd detached by task --bg. Not documented.
   if (command === '_worker') {
     await runWorker(flags._[0])
     return 0
@@ -153,7 +153,7 @@ if (invokedDirectly) {
           process.stderr.write(`  ${err.details.reason}\n`)
         }
         if (err.details?.partial) {
-          process.stderr.write(`\n부분 출력:\n${err.details.partial}\n`)
+          process.stderr.write(`\nPartial output:\n${err.details.partial}\n`)
         }
         process.exit(1)
       }

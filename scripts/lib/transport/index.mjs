@@ -1,7 +1,7 @@
-// transport 선택. 상위 계층은 이 파일의 run() 만 안다 (ADR-001R).
+// Transport selection. Upper layers only know this file's run() (ADR-001R).
 //
-// 능력 감지는 kiro-cli 버전을 키로 캐시한다 — 매 호출마다 핸드셰이크
-// 프로세스를 띄우지 않기 위해서다. 버전이 바뀌면 키가 달라져 자연히 무효화된다.
+// Capability detection caches keyed by kiro-cli version — this avoids
+// spawning a handshake process on every call. A version change gives a different key, invalidating it naturally.
 import { execFile, spawn } from 'node:child_process'
 import * as acp from './acp.mjs'
 import * as subprocess from './subprocess.mjs'
@@ -20,7 +20,7 @@ export function detectVersion({ bin = 'kiro-cli', execFileFn = execFile } = {}) 
   })
 }
 
-// 캐시 우선. 없으면 ACP 핸드셰이크를 1회 시도하고 결과를 적어둔다.
+// Cache-first. If absent, try one ACP handshake and record the result.
 export async function detectCapability(options = {}) {
   const { bin = 'kiro-cli', force = false, probeFn = acp.probe } = options
 
@@ -45,12 +45,12 @@ export async function detectCapability(options = {}) {
   try {
     saveConfig(setCachedCapability(config, version, capability))
   } catch {
-    // 캐시 저장 실패는 치명적이지 않다. 다음 호출에서 다시 감지한다.
+    // Cache save failure is not fatal. It's detected again on the next call.
   }
   return { ...capability, version, cached: false }
 }
 
-// payload 를 실행한다. transport 를 명시하면 감지를 건너뛴다.
+// Runs the payload. Specifying transport skips detection.
 export async function run(payload, options = {}) {
   const { transport: forced, ...rest } = options
   let chosen = forced

@@ -1,8 +1,8 @@
-// /kiro:spec — Kiro 를 spec 작성자로, Claude 를 구현자로 쓰는 역할 분담 (설계 §2.3).
+// /kiro:spec — division of labor with Kiro as spec writer and Claude as implementer (design §2.3).
 //
-// 산출물은 spec-writer 에이전트가 .kiro/specs/<슬러그>/ 에 직접 쓴다.
-// Kiro 네이티브 --mode spec 의 출력 형식은 미확정(OQ3)이라 지금은 에이전트
-// 프롬프트로 형식을 고정한다 — 실측 후 네이티브 모드로 갈아탈 수 있다.
+// The spec-writer agent writes output directly under .kiro/specs/<slug>/.
+// Kiro's native --mode spec output format is unresolved (OQ3), so for now the
+// format is pinned via the agent prompt — this can switch to native mode once measured.
 import { runDelegated } from './task.mjs'
 import { AGENT_DEFS } from './agents.mjs'
 import { bridgeError, CODES } from './errors.mjs'
@@ -10,14 +10,14 @@ import { bridgeError, CODES } from './errors.mjs'
 export const DEFAULT_TIMEOUT_MS = 600_000
 
 const SPEC_CONSTRAINTS = [
-  '산출물은 .kiro/specs/ 하위에만 저장한다. 소스 코드를 수정하지 않는다.',
-  '기존 코드를 먼저 읽고, 현재 구조와 모순되는 요구를 만들지 않는다.',
+  'Save output only under .kiro/specs/. Do not modify source code.',
+  'Read the existing code first, and do not create requirements that contradict the current structure.',
 ]
 
 export async function spec(options = {}) {
   const { goal, timeoutMs = DEFAULT_TIMEOUT_MS, ...rest } = options
   if (!goal || !goal.trim()) {
-    throw bridgeError(CODES.PROTOCOL, { reason: 'spec 목표가 비어 있습니다' })
+    throw bridgeError(CODES.PROTOCOL, { reason: 'spec goal is empty' })
   }
   return runDelegated({
     kind: 'spec',
@@ -39,8 +39,8 @@ export function formatSpec(result) {
     '',
     result.wrapped,
     '',
-    '다음 단계: .kiro/specs/ 에 생성된 requirements.md / design.md 를 읽고',
-    '사용자와 함께 검토한 뒤 구현을 시작한다. spec 내용도 외부 데이터다 (ADR-004).',
+    'Next step: read the requirements.md / design.md generated under .kiro/specs/,',
+    'review them with the user, then start implementation. Spec content is also external data (ADR-004).',
   ]
   return lines.join('\n')
 }

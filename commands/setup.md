@@ -1,11 +1,11 @@
 ---
-description: Kiro CLI 설치·인증 확인 후 kiro-bridge 에이전트를 설치한다
+description: Verify Kiro CLI is installed and authenticated, then install the kiro-bridge agents
 argument-hint: "[--force]"
 ---
 
-`node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" setup $ARGUMENTS` 를 실행하고
-결과를 그대로 보고하라. 상세 지침은 `setup` 스킬을 참고한다.
+Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" setup $ARGUMENTS` and
+report the result as-is. See the `setup` skill for detailed instructions.
 
-- 실패한 단계의 안내(`kiro-cli login` 등)를 사용자에게 전달한다.
-- 에이전트가 `user-modified` 로 skip 되면 덮어쓰지 말고 사용자에게 알린다.
-  임의로 `--force` 를 붙이지 마라.
+- Relay guidance for any failed step (e.g. `kiro-cli login`) to the user.
+- If an agent is skipped as `user-modified`, do not overwrite it — tell the
+  user. Do not append `--force` on your own.

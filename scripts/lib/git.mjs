@@ -1,7 +1,7 @@
-// git diff 수집. 리뷰 컨텍스트의 입력원이다.
+// Collects git diffs. The input source for review context.
 //
-// 원칙: execFile 만 쓰고 셸 문자열은 조립하지 않는다 (설계 §3). ref 는
-// 사용자 입력이므로 인자 배열로만 넘어가야 한다 — `--` 로 옵션 주입도 막는다.
+// Principle: use only execFile, never assemble a shell string (design §3). ref
+// is user input, so it must only be passed as an argument array — `--` also blocks option injection.
 import { execFile } from 'node:child_process'
 import { bridgeError, CODES } from './errors.mjs'
 
@@ -25,8 +25,8 @@ export async function isGitRepo(options = {}) {
   }
 }
 
-// ref 가 실제로 존재하는지 먼저 확인한다. 오타를 diff 실패가 아니라
-// 명확한 오류로 돌려주기 위해서다.
+// Confirm the ref actually exists first, so a typo comes back as a clear
+// error rather than a diff failure.
 export async function resolveRef(ref, options = {}) {
   if (!ref) return null
   try {
@@ -40,15 +40,15 @@ export async function resolveRef(ref, options = {}) {
 function diffArgs(ref, nameOnly) {
   const base = ['diff']
   if (nameOnly) base.push('--name-only')
-  // ref 가 있으면 그 지점과 비교, 없으면 HEAD 대비 (staged + unstaged).
+  // Compare against ref if given, otherwise against HEAD (staged + unstaged).
   base.push(ref || 'HEAD')
   base.push('--')
   return base
 }
 
-// 아직 add 되지 않은 새 파일. `git diff` 에는 절대 나타나지 않으므로
-// 따로 모으지 않으면 "새 파일만 만든 상태"의 리뷰가 조용히 빈손이 된다.
-// .gitignore 는 존중한다 (--exclude-standard).
+// New files that haven't been added yet. These never show up in `git diff`,
+// so without collecting them separately, a review of "only new files created" would silently come back empty.
+// .gitignore is respected (--exclude-standard).
 export async function listUntracked(options = {}) {
   try {
     const out = await run(['ls-files', '--others', '--exclude-standard'], options)
@@ -58,10 +58,10 @@ export async function listUntracked(options = {}) {
   }
 }
 
-// 리뷰 대상 diff 와 변경 파일 목록을 모은다.
-// 파일 목록은 payload.files 의 입력이 되며, excerpt 는 붙이지 않는다 —
-// Kiro 가 read/grep 으로 스스로 읽는 편이 낫다 (ADR-003 결정 5).
-// untracked 파일도 같은 이유로 내용을 싣지 않고 경로만 넘긴다.
+// Collects the diff under review and the list of changed files.
+// The file list becomes input to payload.files, and no excerpt is attached —
+// it's better for Kiro to read it itself via read/grep (ADR-003 decision 5).
+// Untracked files pass only their path for the same reason, no content.
 export async function collectDiff(options = {}) {
   const { ref = null } = options
 
@@ -73,7 +73,7 @@ export async function collectDiff(options = {}) {
   const [diff, nameOnly, untracked] = await Promise.all([
     run(diffArgs(ref, false), options),
     run(diffArgs(ref, true), options),
-    // ref 를 명시했으면 그 지점과의 비교이므로 작업물 상태는 섞지 않는다.
+    // If ref was given, this is a comparison against that point, so working-tree state is not mixed in.
     ref ? Promise.resolve([]) : listUntracked(options),
   ])
 
@@ -84,7 +84,7 @@ export async function collectDiff(options = {}) {
     .map((path) => ({ path, reason: 'changed in diff' }))
 
   for (const path of untracked) {
-    files.push({ path, reason: 'untracked new file — diff 에 없으니 직접 읽어 리뷰할 것' })
+    files.push({ path, reason: 'untracked new file — not in diff, read it directly to review' })
   }
 
   return { diff, files, untracked, ref: ref || 'HEAD' }

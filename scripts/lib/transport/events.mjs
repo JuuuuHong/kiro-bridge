@@ -1,17 +1,17 @@
-// 이벤트 정규화. ACP 의 session/update 와 subprocess 의 stream-json 을
-// 동일한 상위 계약으로 접는다 (ADR-001R 결정 2).
+// Event normalization. Folds ACP's session/update and subprocess's stream-json
+// into the same upper-layer contract (ADR-001R decision 2).
 //
-// 상위 계층(커맨드·findings)은 어느 transport 를 탔는지 알지 못한다.
+// Upper layers (commands, findings) never know which transport was used.
 import { detectDenial } from '../errors.mjs'
 
 export const EVENT_TYPES = {
-  MESSAGE: 'message',       // 모델이 사용자에게 내는 텍스트
-  THOUGHT: 'thought',       // 내부 추론 (표시는 선택)
-  TOOL_CALL: 'tool_call',   // 툴 호출 시작
+  MESSAGE: 'message',       // text the model emits to the user
+  THOUGHT: 'thought',       // internal reasoning (display is optional)
+  TOOL_CALL: 'tool_call',   // start of a tool call
   TOOL_RESULT: 'tool_result',
-  DENIED: 'denied',         // 툴 거부 감지 — 결과 신뢰를 취소해야 한다
-  METADATA: 'metadata',     // contextUsagePercentage 등
-  RAW: 'raw',               // 정규화하지 못한 것. 버리지 않고 그대로 흘린다
+  DENIED: 'denied',         // tool denial detected — result trust must be revoked
+  METADATA: 'metadata',     // contextUsagePercentage, etc.
+  RAW: 'raw',               // couldn't be normalized. passed through as-is, not dropped
 }
 
 function textOf(value) {
@@ -25,8 +25,8 @@ function textOf(value) {
   return ''
 }
 
-// ACP session/update 의 params.update 를 정규화한다.
-// sessionUpdate 판별자는 ACP 스펙 기준이며 실측 대기 항목이다.
+// Normalizes ACP session/update's params.update.
+// The sessionUpdate discriminant is based on the ACP spec and is pending empirical verification.
 export function normalizeAcpUpdate(update) {
   if (!update || typeof update !== 'object') {
     return { type: EVENT_TYPES.RAW, raw: update }
@@ -67,8 +67,8 @@ export function normalizeAcpUpdate(update) {
   }
 }
 
-// subprocess 의 --output-format stream-json 한 줄을 정규화한다.
-// 줄 형식이 ACP session/update 를 그대로 싣는 경우와, 평평한 형태 양쪽을 받는다.
+// Normalizes one line of subprocess's --output-format stream-json.
+// Handles both a line carrying an ACP session/update verbatim and a flat-form line.
 export function normalizeStreamJsonLine(line) {
   if (line == null) return null
   let obj = line
@@ -78,8 +78,8 @@ export function normalizeStreamJsonLine(line) {
     try {
       obj = JSON.parse(trimmed)
     } catch {
-      // JSON 이 아닌 줄은 사람이 읽는 로그다. 거부 문자열이 여기 실려오는
-      // 경우가 있어 텍스트로도 검사한다.
+      // A non-JSON line is a human-readable log. A denial string sometimes
+      // rides here too, so it's also checked as plain text.
       return detectDenial(trimmed)
         ? { type: EVENT_TYPES.DENIED, text: trimmed }
         : { type: EVENT_TYPES.RAW, raw: trimmed }
@@ -101,7 +101,7 @@ export function normalizeStreamJsonLine(line) {
   return { type: EVENT_TYPES.RAW, raw: obj }
 }
 
-// 이벤트 스트림을 모아 최종 텍스트와 거부 여부를 낸다.
+// Aggregates the event stream into the final text and denial status.
 export function createCollector() {
   const chunks = []
   const denials = []
@@ -129,7 +129,7 @@ export function createCollector() {
   }
 }
 
-// 줄 단위 스트림 분해기. 청크 경계에 걸친 줄을 버리지 않는다.
+// Line-based stream splitter. Never drops a line split across chunk boundaries.
 export function createLineSplitter(onLine) {
   let buffer = ''
   return {

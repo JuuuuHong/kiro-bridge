@@ -12,7 +12,7 @@ import { CODES } from '../scripts/lib/errors.mjs'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const MOCK = join(HERE, 'fixtures', 'mock-kiro-cli.mjs')
 
-// 목업을 kiro-cli 자리에 꽂는다. 실제 바이너리 없이 도는 계층이다 (설계 §11).
+// Plugs a mock in place of kiro-cli. This layer runs without the real binary (design §11).
 function mockSpawn(scenario) {
   return (_bin, args, opts = {}) =>
     spawn(process.execPath, [MOCK, ...args], {
@@ -21,11 +21,11 @@ function mockSpawn(scenario) {
     })
 }
 
-const PAYLOAD = { kind: 'review', goal: '리뷰해줘' }
+const PAYLOAD = { kind: 'review', goal: 'please review' }
 
-// --- ACP 정상 경로 ---
+// --- ACP happy path ---
 
-test('acp: 정상 왕복 — sessionId 와 결과 텍스트를 낸다', async () => {
+test('acp: a normal round trip yields sessionId and result text', async () => {
   const events = []
   const r = await acp.run(PAYLOAD, {
     spawnFn: mockSpawn('ok'),
@@ -38,7 +38,7 @@ test('acp: 정상 왕복 — sessionId 와 결과 텍스트를 낸다', async ()
   assert.equal(r.stopReason, 'end_turn')
 })
 
-test('acp: 스트리밍 이벤트가 상위로 흐른다', async () => {
+test('acp: streaming events flow up to the caller', async () => {
   const events = []
   await acp.run(PAYLOAD, {
     spawnFn: mockSpawn('ok'),
@@ -46,13 +46,13 @@ test('acp: 스트리밍 이벤트가 상위로 흐른다', async () => {
     timeoutMs: 10_000,
   })
   const types = events.map((e) => e.type)
-  assert.ok(types.includes(EVENT_TYPES.THOUGHT), '사고 청크')
-  assert.ok(types.includes(EVENT_TYPES.TOOL_CALL), '툴 호출 가시화')
-  assert.ok(types.includes(EVENT_TYPES.TOOL_RESULT), '툴 결과')
-  assert.ok(types.includes(EVENT_TYPES.MESSAGE), '메시지 청크')
+  assert.ok(types.includes(EVENT_TYPES.THOUGHT), 'thought chunk')
+  assert.ok(types.includes(EVENT_TYPES.TOOL_CALL), 'tool call visibility')
+  assert.ok(types.includes(EVENT_TYPES.TOOL_RESULT), 'tool result')
+  assert.ok(types.includes(EVENT_TYPES.MESSAGE), 'message chunk')
 })
 
-test('acp: 기존 sessionId 를 주면 session/load 로 재사용한다', async () => {
+test('acp: an existing sessionId is reused via session/load', async () => {
   const r = await acp.run(PAYLOAD, {
     spawnFn: mockSpawn('ok'),
     sessionId: 'sess-existing',
@@ -61,9 +61,9 @@ test('acp: 기존 sessionId 를 주면 session/load 로 재사용한다', async 
   assert.equal(r.sessionId, 'sess-existing')
 })
 
-// --- 툴 거부: 가장 중요한 실패 모드 (설계 §8, ADR-002) ---
+// --- tool denial: the most important failure mode (design §8, ADR-002) ---
 
-test('acp: 툴 거부를 감지하면 그럴듯한 findings 를 성공으로 반환하지 않는다', async () => {
+test('acp: detecting a tool denial never returns plausible-looking findings as success', async () => {
   await assert.rejects(
     acp.run(PAYLOAD, { spawnFn: mockSpawn('denied'), timeoutMs: 10_000 }),
     (err) => {
@@ -74,16 +74,16 @@ test('acp: 툴 거부를 감지하면 그럴듯한 findings 를 성공으로 반
   )
 })
 
-test('subprocess: 툴 거부도 동일하게 오류로 승격된다', async () => {
+test('subprocess: a tool denial is promoted to an error the same way', async () => {
   await assert.rejects(
     subprocess.run(PAYLOAD, { spawnFn: mockSpawn('denied'), timeoutMs: 10_000 }),
     (err) => err.code === CODES.TOOL_DENIED,
   )
 })
 
-// --- 권한 브로커링 (ACP 전용 축) ---
+// --- permission brokering (ACP-only axis) ---
 
-test('acp: session/request_permission 이 클라이언트로 브로커링된다', async () => {
+test('acp: session/request_permission is brokered to the client', async () => {
   let asked = null
   const r = await acp.run(PAYLOAD, {
     spawnFn: mockSpawn('permission'),
@@ -94,33 +94,33 @@ test('acp: session/request_permission 이 클라이언트로 브로커링된다'
     timeoutMs: 10_000,
   })
   assert.equal(asked.toolCall.toolCallId, 'tc1')
-  assert.match(r.result, /허가됨/)
+  assert.match(r.result, /granted/)
 })
 
-test('acp: 권한 핸들러가 없으면 거부가 기본값이다 (ADR-002)', async () => {
+test('acp: denial is the default when there is no permission handler (ADR-002)', async () => {
   await assert.rejects(
     acp.run(PAYLOAD, { spawnFn: mockSpawn('permission'), timeoutMs: 10_000 }),
     (err) => err.code === CODES.TOOL_DENIED,
   )
 })
 
-// --- 실패 모드 표 (설계 §8) ---
+// --- failure mode table (design §8) ---
 
-test('acp: 미인증은 UNAUTHENTICATED 로 분류된다', async () => {
+test('acp: unauthenticated is classified as UNAUTHENTICATED', async () => {
   await assert.rejects(
     acp.run(PAYLOAD, { spawnFn: mockSpawn('unauthenticated'), timeoutMs: 10_000 }),
     (err) => err.code === CODES.UNAUTHENTICATED,
   )
 })
 
-test('subprocess: 스로틀/크레딧 소진은 THROTTLED 로 분류된다', async () => {
+test('subprocess: throttling/credit exhaustion is classified as THROTTLED', async () => {
   await assert.rejects(
     subprocess.run(PAYLOAD, { spawnFn: mockSpawn('throttled'), timeoutMs: 10_000 }),
     (err) => err.code === CODES.THROTTLED,
   )
 })
 
-test('acp: 타임아웃은 부분 출력과 함께 보고되고 재시도하지 않는다', async () => {
+test('acp: a timeout is reported with partial output and is not retried', async () => {
   await assert.rejects(
     acp.run(PAYLOAD, { spawnFn: mockSpawn('timeout'), timeoutMs: 400 }),
     (err) => {
@@ -131,14 +131,14 @@ test('acp: 타임아웃은 부분 출력과 함께 보고되고 재시도하지 
   )
 })
 
-test('subprocess: 0 아닌 종료 코드는 SPAWN_FAILED', async () => {
+test('subprocess: a nonzero exit code becomes SPAWN_FAILED', async () => {
   await assert.rejects(
     subprocess.run(PAYLOAD, { spawnFn: mockSpawn('nonzero-exit'), timeoutMs: 10_000 }),
     (err) => err.code === CODES.SPAWN_FAILED,
   )
 })
 
-test('acp: AbortSignal 로 취소하면 CANCELLED', async () => {
+test('acp: cancelling via AbortSignal yields CANCELLED', async () => {
   const controller = new AbortController()
   setTimeout(() => controller.abort(), 150)
   await assert.rejects(
@@ -147,17 +147,17 @@ test('acp: AbortSignal 로 취소하면 CANCELLED', async () => {
   )
 })
 
-// --- 페이로드 전달 (ADR-003 결정 4: 항상 stdin) ---
+// --- payload delivery (ADR-003 decision 4: always stdin) ---
 
-test('subprocess: 페이로드가 stdin 으로 온전히 전달된다', async () => {
+test('subprocess: the payload arrives intact via stdin', async () => {
   const r = await subprocess.run(
-    { kind: 'review', goal: 'stdin-왕복-확인' },
+    { kind: 'review', goal: 'stdin-roundtrip-check' },
     { spawnFn: mockSpawn('ok'), timeoutMs: 10_000 },
   )
-  assert.match(r.result, /echo:stdin-왕복-확인/)
+  assert.match(r.result, /echo:stdin-roundtrip-check/)
 })
 
-test('subprocess: 인자 조립에 셸 문자열이 없다', () => {
+test('subprocess: argument assembly has no shell string', () => {
   const args = subprocess.buildArgs({ agent: 'kiro-bridge-reviewer', model: 'sonnet' })
   assert.deepEqual(args, [
     'chat', '--no-interactive', '--output-format', 'stream-json',
@@ -166,21 +166,21 @@ test('subprocess: 인자 조립에 셸 문자열이 없다', () => {
   assert.ok(!args.some((a) => /[;|&$`]/.test(a)))
 })
 
-test('subprocess: 원샷 경로에는 재사용할 세션이 없다', async () => {
+test('subprocess: there is no session to reuse on the one-shot path', async () => {
   const r = await subprocess.run(PAYLOAD, { spawnFn: mockSpawn('ok'), timeoutMs: 10_000 })
   assert.equal(r.sessionId, null)
   assert.equal(r.transport, 'subprocess')
 })
 
-// --- 능력 감지 ---
+// --- capability detection ---
 
-test('acp.probe: 핸드셰이크 성공 시 available', async () => {
+test('acp.probe: available on a successful handshake', async () => {
   const r = await acp.probe({ spawnFn: mockSpawn('ok'), timeoutMs: 5000 })
   assert.equal(r.available, true)
   assert.equal(r.initialize.protocolVersion, 1)
 })
 
-test('acp.probe: acp 서브커맨드가 없으면 available:false', async () => {
+test('acp.probe: available:false when the acp subcommand is missing', async () => {
   const r = await acp.probe({ spawnFn: mockSpawn('acp-unavailable'), timeoutMs: 2000 })
   assert.equal(r.available, false)
 })

@@ -1,10 +1,10 @@
-// stdio JSON-RPC 2.0 클라이언트 (ACP용).
+// stdio JSON-RPC 2.0 client (for ACP).
 //
-// 프레이밍: 개행 구분 JSON (ndjson). LSP 의 Content-Length 헤더가 아니다.
-// ACP 스펙 기준이며 실측 대기 항목이다 — 틀렸다면 이 파일 한 곳만 바뀐다.
+// Framing: newline-delimited JSON (ndjson). Not LSP's Content-Length header.
+// Based on the ACP spec and pending empirical verification — if wrong, only this one file changes.
 //
-// 역방향 요청(agent → client)을 반드시 처리해야 한다. session/request_permission
-// 이 그 경로이고, 응답하지 않으면 에이전트가 멈춘다.
+// Reverse requests (agent -> client) must be handled. session/request_permission
+// is that path, and the agent hangs if it isn't answered.
 import { createLineSplitter } from './events.mjs'
 import { bridgeError, CODES } from '../errors.mjs'
 
@@ -22,7 +22,7 @@ export class JsonRpcClient {
     this.splitter = createLineSplitter((line) => this.#handleLine(line))
   }
 
-  // stdout 청크를 그대로 넣는다. 줄 경계는 splitter 가 맞춘다.
+  // Feeds in the stdout chunk as-is. The splitter handles line boundaries.
   feed(chunk) {
     this.splitter.push(String(chunk))
   }
@@ -32,7 +32,7 @@ export class JsonRpcClient {
     try {
       msg = JSON.parse(line)
     } catch {
-      // 프로토콜 스트림에 섞인 비-JSON 은 무시한다. 진단은 stderr 로 남는다.
+      // Non-JSON mixed into the protocol stream is ignored. Diagnostics are left to stderr.
       return
     }
 
@@ -49,7 +49,7 @@ export class JsonRpcClient {
     }
 
     if (msg.method && msg.id != null) {
-      // 역방향 요청 — 반드시 응답해야 한다.
+      // Reverse request — must be answered.
       this.#respondToRequest(msg)
       return
     }
@@ -95,7 +95,7 @@ export class JsonRpcClient {
     return promise
   }
 
-  // 프로세스가 죽으면 대기 중인 요청을 전부 깨운다 — 조용히 매달리지 않게.
+  // If the process dies, all pending requests are woken up — so they never hang silently.
   close(error) {
     if (this.#closed) return
     this.#closed = true

@@ -1,0 +1,13 @@
+{
+  "name": "kiro-bridge",
+  "owner": {
+    "name": "JuuuuHong"
+  },
+  "plugins": [
+    {
+      "name": "kiro-bridge",
+      "source": "./",
+      "description": "Delegate reviews, research, and spec-writing from Claude Code to Kiro CLI over ACP, with structured context handoff and a read-only-by-default trust boundary."
+    }
+  ]
+}

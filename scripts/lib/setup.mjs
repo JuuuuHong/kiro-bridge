@@ -1,7 +1,7 @@
-// /kiro:setup — 설치 확인, 능력 감지, 에이전트 설치 + validate.
+// /kiro:setup — install check, capability detection, agent install + validate.
 //
-// validate 통과는 필수다 (설계 §6). 통과하지 못한 에이전트를 설치해두면
-// 리뷰가 조용히 툴 거부를 맞고, 그게 바로 ADR-002 가 막으려는 실패다.
+// Passing validate is required (design §6). Installing an agent that fails
+// validate means reviews silently hit tool denial — exactly the failure ADR-002 exists to prevent.
 import { execFile } from 'node:child_process'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -38,15 +38,15 @@ export async function setup(options = {}) {
   const steps = []
 
   const version = await detectVersion({ bin, ...options })
-  steps.push({ step: 'version', ok: Boolean(version), detail: version || 'kiro-cli 를 찾지 못했습니다' })
+  steps.push({ step: 'version', ok: Boolean(version), detail: version || 'kiro-cli was not found' })
   if (!version) {
-    return { ok: false, steps, hint: 'kiro-cli 설치 후 다시 실행하세요.' }
+    return { ok: false, steps, hint: 'Install kiro-cli and run again.' }
   }
 
   const auth = await checkAuth({ bin, ...options })
   steps.push({ step: 'auth', ok: auth.authenticated, detail: auth.detail })
   if (!auth.authenticated) {
-    return { ok: false, steps, hint: '`kiro-cli login` 을 실행한 뒤 다시 시도하세요.' }
+    return { ok: false, steps, hint: 'Run `kiro-cli login` and try again.' }
   }
 
   let capability = null
@@ -55,13 +55,13 @@ export async function setup(options = {}) {
     steps.push({
       step: 'transport',
       ok: true,
-      detail: `${capability.transport} (${capability.cached ? '캐시' : capability.reason})`,
+      detail: `${capability.transport} (${capability.cached ? 'cached' : capability.reason})`,
     })
   } catch (err) {
     steps.push({ step: 'transport', ok: false, detail: String(err?.message || err) })
   }
 
-  // 에이전트 설치 — tool 명명 규약을 validate 로 탐침해 확정한다 (OQ4).
+  // Install agents — resolve the tool naming convention by probing with validate (OQ4).
   const scratch = mkdtempSync(join(tmpdir(), 'kiro-bridge-agent-'))
   const installed = []
   try {
@@ -78,7 +78,7 @@ export async function setup(options = {}) {
         steps.push({
           step: `agent:${key}`,
           ok: false,
-          detail: `validate 실패 — 시도: ${probe.attempts.map((a) => a.toolSet).join(', ')}`,
+          detail: `validate failed — attempted: ${probe.attempts.map((a) => a.toolSet).join(', ')}`,
           attempts: probe.attempts,
         })
         continue
@@ -89,15 +89,15 @@ export async function setup(options = {}) {
       steps.push({
         step: `agent:${key}`,
         ok: result.action !== 'skipped',
-        detail: `${result.action} (tool 규약: ${probe.toolSet}) → ${result.target}${result.reason ? ` — ${result.reason}` : ''}`,
+        detail: `${result.action} (tool convention: ${probe.toolSet}) -> ${result.target}${result.reason ? ` — ${result.reason}` : ''}`,
       })
 
-      // 확정된 명명 규약을 기록해 다음 실행에서 재탐침하지 않는다.
+      // Record the resolved naming convention so the next run doesn't re-probe.
       const config = loadConfig()
       try {
         saveConfig({ ...config, toolNaming: probe.toolSet })
       } catch {
-        // 기록 실패는 치명적이지 않다.
+        // Failure to record is not fatal.
       }
     }
   } finally {

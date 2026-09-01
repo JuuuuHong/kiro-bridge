@@ -21,7 +21,7 @@ afterEach(() => {
 
 const CWD = '/tmp/fake-repo'
 
-test('createJob: meta 와 queued 상태가 만들어진다', () => {
+test('createJob: creates meta and a queued status', () => {
   const { jobId } = jobs.createJob({ cwd: CWD, command: 'task', payloadOptions: { goal: 'g' } })
   const job = jobs.readJob(jobId, CWD)
   assert.equal(job.status, 'queued')
@@ -29,7 +29,7 @@ test('createJob: meta 와 queued 상태가 만들어진다', () => {
   assert.equal(job.meta.payloadOptions.goal, 'g')
 })
 
-test('transition: 유효한 전이만 허용한다', () => {
+test('transition: only valid transitions are allowed', () => {
   const { jobId } = jobs.createJob({ cwd: CWD, command: 'task' })
   assert.throws(() => jobs.transition(jobId, 'done', CWD), /invalid transition/)
   jobs.transition(jobId, 'running', CWD)
@@ -38,7 +38,7 @@ test('transition: 유효한 전이만 허용한다', () => {
   assert.ok(jobs.readJob(jobId, CWD).meta.finishedAt)
 })
 
-test('transition: 종결 상태는 불변이다 — 취소 경합에 뒤집히지 않는다', () => {
+test('transition: terminal state is immutable — not flipped by a cancel race', () => {
   const { jobId } = jobs.createJob({ cwd: CWD, command: 'task' })
   jobs.transition(jobId, 'running', CWD)
   jobs.transition(jobId, 'done', CWD)
@@ -46,29 +46,29 @@ test('transition: 종결 상태는 불변이다 — 취소 경합에 뒤집히�
   assert.equal(jobs.readJob(jobId, CWD).status, 'done')
 })
 
-test('cwd 스코프: 다른 저장소의 잡은 보이지 않는다', () => {
+test('cwd scoping: jobs from another repository are not visible', () => {
   jobs.createJob({ cwd: '/tmp/repo-a', command: 'task' })
   assert.equal(jobs.listJobs({ cwd: '/tmp/repo-b' }).length, 0)
   assert.equal(jobs.listJobs({ cwd: '/tmp/repo-a' }).length, 1)
 })
 
-test('latestJobId: 시간순 마지막 잡을 돌려준다', () => {
+test('latestJobId: returns the chronologically last job', () => {
   jobs.createJob({ cwd: CWD, command: 'task' })
   const second = jobs.createJob({ cwd: CWD, command: 'task' })
   assert.equal(jobs.latestJobId(CWD), second.jobId)
 })
 
-test('result 저장·회수 왕복', () => {
+test('result save/read round trip', () => {
   const { jobId } = jobs.createJob({ cwd: CWD, command: 'task' })
-  jobs.writeResult(jobId, '결과 본문', CWD)
-  assert.equal(jobs.readResult(jobId, CWD), '결과 본문')
-  assert.equal(jobs.readResult('없는-잡', CWD), null)
+  jobs.writeResult(jobId, 'result body', CWD)
+  assert.equal(jobs.readResult(jobId, CWD), 'result body')
+  assert.equal(jobs.readResult('nonexistent-job', CWD), null)
 })
 
-test('reapOrphans: running 인데 프로세스가 죽었으면 failed 로 처리한다', () => {
+test('reapOrphans: marks failed when running but the process is dead', () => {
   const { jobId } = jobs.createJob({ cwd: CWD, command: 'task' })
   jobs.transition(jobId, 'running', CWD)
-  // 존재할 수 없는 PID — kill(pid, 0) 이 실패한다.
+  // A PID that cannot exist — kill(pid, 0) fails.
   jobs.updateMeta(jobId, { pid: 999999999 }, CWD)
   const reaped = jobs.reapOrphans(CWD)
   assert.deepEqual(reaped, [jobId])
@@ -77,24 +77,24 @@ test('reapOrphans: running 인데 프로세스가 죽었으면 failed 로 처리
   assert.match(job.meta.error, /orphaned/)
 })
 
-test('reapOrphans: 살아있는 프로세스는 건드리지 않는다', () => {
+test('reapOrphans: leaves a live process alone', () => {
   const { jobId } = jobs.createJob({ cwd: CWD, command: 'task' })
   jobs.transition(jobId, 'running', CWD)
-  jobs.updateMeta(jobId, { pid: process.pid }, CWD) // 이 테스트 프로세스 = 확실히 살아있음
+  jobs.updateMeta(jobId, { pid: process.pid }, CWD) // this test process — definitely alive
   assert.deepEqual(jobs.reapOrphans(CWD), [])
   assert.equal(jobs.readJob(jobId, CWD).status, 'running')
 })
 
-test('cancelJob: 이미 종결된 잡은 취소 실패를 명확히 알린다', () => {
+test('cancelJob: clearly reports failure for an already-terminal job', () => {
   const { jobId } = jobs.createJob({ cwd: CWD, command: 'task' })
   jobs.transition(jobId, 'running', CWD)
   jobs.transition(jobId, 'done', CWD)
   const res = jobs.cancelJob(jobId, { cwd: CWD })
   assert.equal(res.ok, false)
-  assert.match(res.reason, /종결/)
+  assert.match(res.reason, /terminal/)
 })
 
-test('cancelJob: 살아있는 잡에 SIGTERM 을 보내고 cancelled 로 전이한다', () => {
+test('cancelJob: sends SIGTERM to a live job and transitions to cancelled', () => {
   const { jobId } = jobs.createJob({ cwd: CWD, command: 'task' })
   jobs.transition(jobId, 'running', CWD)
   jobs.updateMeta(jobId, { pid: process.pid }, CWD)
@@ -105,14 +105,14 @@ test('cancelJob: 살아있는 잡에 SIGTERM 을 보내고 cancelled 로 전이�
   assert.equal(jobs.readJob(jobId, CWD).status, 'cancelled')
 })
 
-test('gcJobs: 보존기간이 지난 종결 잡만 지운다', () => {
+test('gcJobs: removes only terminal jobs past the retention period', () => {
   const old = jobs.createJob({ cwd: CWD, command: 'task' })
   jobs.transition(old.jobId, 'running', CWD)
   jobs.transition(old.jobId, 'done', CWD)
   const past = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString()
   jobs.updateMeta(old.jobId, { finishedAt: past }, CWD)
 
-  const fresh = jobs.createJob({ cwd: CWD, command: 'task' }) // queued — GC 대상 아님
+  const fresh = jobs.createJob({ cwd: CWD, command: 'task' }) // queued — not a GC target
 
   const removed = jobs.gcJobs({ cwd: CWD, retentionDays: 30 })
   assert.deepEqual(removed, [old.jobId])

@@ -41,13 +41,13 @@ const fakeCollect = async () => ({
 })
 
 const OK_RESPONSE = JSON.stringify({
-  findings: [{ severity: 'high', file: 'src/app.mjs', line: 1, claim: '하드코딩 키', evidence: 'e', suggestion: 's' }],
-  summary: '1건',
+  findings: [{ severity: 'high', file: 'src/app.mjs', line: 1, claim: 'hardcoded key', evidence: 'e', suggestion: 's' }],
+  summary: '1 finding',
 })
 
-// --- 인자 파싱 ---
+// --- argument parsing ---
 
-test('parseArgs: 플래그와 위치 인자를 분리한다', () => {
+test('parseArgs: separates flags from positional args', () => {
   const { command, flags } = parseArgs(['review', 'main', '--dry-run', '--timeout', '500'])
   assert.equal(command, 'review')
   assert.deepEqual(flags._, ['main'])
@@ -55,35 +55,35 @@ test('parseArgs: 플래그와 위치 인자를 분리한다', () => {
   assert.equal(flags.timeoutMs, 500)
 })
 
-test('parseArgs: 모르는 플래그는 거부', () => {
+test('parseArgs: rejects unknown flags', () => {
   assert.throws(() => parseArgs(['review', '--yolo']), /unknown flag/)
 })
 
-// --- review 플로우 ---
+// --- review flow ---
 
-test('review: diff 가 없으면 전송하지 않고 종료', async () => {
+test('review: exits without sending when there is no diff', async () => {
   let called = false
   const r = await review({
     collectDiffFn: async () => ({ diff: '\n', files: [], ref: 'HEAD' }),
     runFn: async () => { called = true },
   })
   assert.equal(r.empty, true)
-  assert.equal(called, false, '변경이 없으면 크레딧을 쓰면 안 된다')
+  assert.equal(called, false, 'must not spend credits when there are no changes')
 })
 
-test('review: 페이로드가 redaction 을 거쳐 전송된다', async () => {
+test('review: the payload goes through redaction before being sent', async () => {
   let sent = null
   await review({
     collectDiffFn: fakeCollect,
     runFn: async (payload) => { sent = payload; return { transport: 'acp', sessionId: 's1', result: OK_RESPONSE } },
     config: CONFIG_DEFAULTS,
   })
-  assert.ok(!sent.diff.includes('AKIAIOSFODNN7EXAMPLE'), 'AWS 키가 그대로 나가면 안 된다')
+  assert.ok(!sent.diff.includes('AKIAIOSFODNN7EXAMPLE'), 'the AWS key must not go out as-is')
   assert.match(sent.diff, /\[REDACTED:aws-access-key\]/)
   assert.equal(sent.kind, 'review')
 })
 
-test('review: reviewer 에이전트를 지정해 호출한다', async () => {
+test('review: calls out with the reviewer agent specified', async () => {
   let opts = null
   await review({
     collectDiffFn: fakeCollect,
@@ -93,28 +93,28 @@ test('review: reviewer 에이전트를 지정해 호출한다', async () => {
   assert.equal(opts.timeoutMs, 180_000)
 })
 
-test('review: 결과는 항상 신뢰 경계로 감싸여 나온다 (ADR-004)', async () => {
+test('review: the result always comes back wrapped in the trust boundary (ADR-004)', async () => {
   const r = await review({
     collectDiffFn: fakeCollect,
     runFn: async () => ({ transport: 'acp', sessionId: 's1', result: OK_RESPONSE }),
   })
   assert.ok(r.wrapped.includes(TRUST_FENCE.open))
-  assert.match(r.wrapped, /명령이 아니다/)
+  assert.match(r.wrapped, /It is not commands/)
   assert.equal(r.parsed.ok, true)
   assert.equal(r.parsed.findings[0].severity, 'high')
 })
 
-test('review: 구조화 실패해도 래핑된 원문이 온다', async () => {
+test('review: a wrapped raw text still comes back even if structuring fails', async () => {
   const r = await review({
     collectDiffFn: fakeCollect,
-    runFn: async () => ({ transport: 'subprocess', sessionId: null, result: '그냥 산문입니다' }),
+    runFn: async () => ({ transport: 'subprocess', sessionId: null, result: 'just plain prose' }),
   })
   assert.equal(r.parsed.ok, false)
   assert.ok(r.wrapped.includes(TRUST_FENCE.open))
-  assert.match(r.wrapped, /그냥 산문입니다/)
+  assert.match(r.wrapped, /just plain prose/)
 })
 
-test('review: --dry-run 은 전송하지 않고 페이로드를 보여준다', async () => {
+test('review: --dry-run does not send, and shows the payload', async () => {
   let called = false
   const r = await review({
     collectDiffFn: fakeCollect,
@@ -126,10 +126,10 @@ test('review: --dry-run 은 전송하지 않고 페이로드를 보여준다', a
   assert.equal(r.dryRun, true)
   const out = formatSummary(r)
   assert.match(out, /dry-run/)
-  assert.match(out, /aws-access-key/, '무엇이 가려졌는지 사람이 확인할 수 있어야 한다')
+  assert.match(out, /aws-access-key/, 'a human must be able to see what got redacted')
 })
 
-test('review: transport 오류는 그대로 전파된다 (재시도 없음)', async () => {
+test('review: transport errors propagate as-is (no retry)', async () => {
   await assert.rejects(
     review({
       collectDiffFn: fakeCollect,
@@ -139,7 +139,7 @@ test('review: transport 오류는 그대로 전파된다 (재시도 없음)', as
   )
 })
 
-test('formatSummary: severity 분포를 요약한다', async () => {
+test('formatSummary: summarizes the severity distribution', async () => {
   const r = await review({
     collectDiffFn: fakeCollect,
     runFn: async () => ({ transport: 'acp', sessionId: 's', result: OK_RESPONSE }),
@@ -147,24 +147,24 @@ test('formatSummary: severity 분포를 요약한다', async () => {
   assert.match(formatSummary(r), /high 1 \/ medium 0 \/ low 0/)
 })
 
-// --- 에이전트 정의 ---
+// --- agent definitions ---
 
-test('agents: reviewer 는 읽기만 신뢰하고 쓰기는 넣지 않는다 (ADR-002)', () => {
+test('agents: reviewer only trusts read and never gets write (ADR-002)', () => {
   const rendered = renderAgent(AGENT_DEFS.reviewer, 'short')
   assert.deepEqual(rendered.tools, ['read', 'grep', 'glob'])
   assert.ok(!rendered.tools.includes('write'))
   assert.ok(!rendered.tools.includes('shell'))
 })
 
-test('agents: 명명 규약을 바꾸면 tool 이름만 바뀐다', () => {
+test('agents: changing the naming convention only changes tool names', () => {
   const prefixed = renderAgent(AGENT_DEFS.reviewer, 'prefixed')
   assert.deepEqual(prefixed.tools, ['fs_read', 'grep', 'glob'])
   assert.equal(prefixed.prompt, renderAgent(AGENT_DEFS.reviewer, 'short').prompt)
 })
 
-test('agents: validate 탐침이 통과하는 규약을 고른다 (OQ4)', async () => {
+test('agents: the validate probe picks whichever convention passes (OQ4)', async () => {
   const scratch = mkdtempSync(join(tmpdir(), 'probe-'))
-  // short 는 거부하고 prefixed 만 통과하는 가짜 validate
+  // fake validate that rejects short and only passes prefixed
   const validateFn = async (path) => {
     const json = JSON.parse(readFileSync(path, 'utf8'))
     if (json.tools.includes('read')) throw new Error('unknown tool: read')
@@ -179,7 +179,7 @@ test('agents: validate 탐침이 통과하는 규약을 고른다 (OQ4)', async 
   rmSync(scratch, { recursive: true, force: true })
 })
 
-test('agents: 둘 다 실패하면 toolSet 은 null 이고 시도 내역이 남는다', async () => {
+test('agents: if both fail, toolSet is null and the attempt history is kept', async () => {
   const scratch = mkdtempSync(join(tmpdir(), 'probe-'))
   const probe = await probeToolNaming(AGENT_DEFS.reviewer, {
     tmpPath: join(scratch, 'a.json'),
@@ -190,28 +190,28 @@ test('agents: 둘 다 실패하면 toolSet 은 null 이고 시도 내역이 남�
   rmSync(scratch, { recursive: true, force: true })
 })
 
-test('agents: 사용자가 수정한 파일은 덮어쓰지 않는다 (설계 §6)', () => {
+test('agents: a file the user modified is not overwritten (design §6)', () => {
   const dir = mkdtempSync(join(tmpdir(), 'agents-'))
   const rendered = renderAgent(AGENT_DEFS.reviewer, 'short')
 
   const first = installAgent(rendered, { dir })
   assert.equal(first.action, 'installed')
 
-  // 사용자가 손댐 — 해시가 스탬프와 어긋난다
+  // User touched it — the hash now diverges from the stamp
   const target = join(dir, `${rendered.name}.json`)
   const modified = JSON.parse(readFileSync(target, 'utf8'))
-  modified.prompt = '내가 바꾼 프롬프트'
+  modified.prompt = 'my custom prompt'
   writeFileSync(target, JSON.stringify(modified, null, 2))
 
   const second = installAgent(rendered, { dir })
   assert.equal(second.action, 'skipped')
   assert.match(second.reason, /user-modified/)
-  assert.match(readFileSync(target, 'utf8'), /내가 바꾼 프롬프트/)
+  assert.match(readFileSync(target, 'utf8'), /my custom prompt/)
 
   rmSync(dir, { recursive: true, force: true })
 })
 
-test('agents: 손대지 않은 동일 버전은 unchanged', () => {
+test('agents: an untouched, same-version install is unchanged', () => {
   const dir = mkdtempSync(join(tmpdir(), 'agents-'))
   const rendered = renderAgent(AGENT_DEFS.reviewer, 'short')
   installAgent(rendered, { dir })
@@ -219,22 +219,22 @@ test('agents: 손대지 않은 동일 버전은 unchanged', () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-test('agents: 해시는 스탬프를 제외한 본문만 본다', () => {
+test('agents: the hash only looks at the body, excluding the stamp', () => {
   const a = renderAgent(AGENT_DEFS.reviewer, 'short')
   const b = { ...a, _kiroBridge: { version: '9.9.9', toolSet: 'short' } }
   assert.equal(agentHash(a), agentHash(b))
 })
 
-// --- setup 플로우 ---
+// --- setup flow ---
 
-test('setup: kiro-cli 가 없으면 즉시 멈추고 안내한다', async () => {
+test('setup: stops immediately and guides the user when kiro-cli is missing', async () => {
   const r = await setup({ execFileFn: (_b, _a, _o, cb) => cb(new Error('ENOENT'), '', '') })
   assert.equal(r.ok, false)
   assert.equal(r.steps[0].step, 'version')
-  assert.match(r.hint, /설치/)
+  assert.match(r.hint, /Install/)
 })
 
-test('setup: 미인증이면 login 을 안내하고 에이전트를 설치하지 않는다', async () => {
+test('setup: guides to login and skips agent install when unauthenticated', async () => {
   const execFileFn = (_b, args, _o, cb) => {
     if (args[0] === '--version') return cb(null, 'kiro-cli 2.20.1\n', '')
     if (args[0] === 'whoami') return cb(new Error('not logged in'), '', 'not logged in')
@@ -243,10 +243,10 @@ test('setup: 미인증이면 login 을 안내하고 에이전트를 설치하지
   const r = await setup({ execFileFn })
   assert.equal(r.ok, false)
   assert.match(r.hint, /login/)
-  assert.ok(!r.steps.some((s) => s.step.startsWith('agent:')), '미인증 상태로 에이전트를 설치하면 안 된다')
+  assert.ok(!r.steps.some((s) => s.step.startsWith('agent:')), 'must not install agents while unauthenticated')
 })
 
-test('setup: 정상 경로는 에이전트를 설치하고 규약을 기록한다', async () => {
+test('setup: the happy path installs agents and records the convention', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'agents-'))
   const execFileFn = (_b, args, _o, cb) => {
     if (args[0] === '--version') return cb(null, 'kiro-cli 2.20.1\n', '')
@@ -266,9 +266,9 @@ test('setup: 정상 경로는 에이전트를 설치하고 규약을 기록한�
   rmSync(dir, { recursive: true, force: true })
 })
 
-// --- git 인자 안전성 ---
+// --- git argument safety ---
 
-test('git: ref 는 인자 배열로만 전달되고 셸을 타지 않는다', async () => {
+test('git: ref is passed only as an argument array and never touches a shell', async () => {
   const calls = []
   const execFileFn = (bin, args, _o, cb) => {
     calls.push({ bin, args })
@@ -279,44 +279,44 @@ test('git: ref 는 인자 배열로만 전달되고 셸을 타지 않는다', as
   }
   await collectDiff({ ref: 'main; rm -rf /', execFileFn })
   const diffCall = calls.find((c) => c.args[0] === 'diff' && !c.args.includes('--name-only'))
-  assert.ok(diffCall.args.includes('main; rm -rf /'), 'ref 는 인자 하나로 통째 전달된다')
-  assert.ok(diffCall.args.includes('--'), '옵션 주입 차단용 -- 가 있어야 한다')
+  assert.ok(diffCall.args.includes('main; rm -rf /'), 'ref is passed whole as a single argument')
+  assert.ok(diffCall.args.includes('--'), 'must include -- to block option injection')
 })
 
-test('git: 저장소가 아니면 명확한 오류', async () => {
+test('git: a clear error when not a repository', async () => {
   await assert.rejects(
     collectDiff({ execFileFn: (_b, _a, _o, cb) => cb(null, 'false\n', '') }),
     (err) => /not a git repository/.test(err.details.reason),
   )
 })
 
-// --- untracked 파일: 조용한 빈손 리뷰 방지 (회귀) ---
+// --- untracked files: prevent a silently empty-handed review (regression) ---
 
-test('review: untracked 파일만 있어도 리뷰를 진행한다', async () => {
+test('review: proceeds with the review even with only untracked files', async () => {
   let sent = null
   const r = await review({
     collectDiffFn: async () => ({
       diff: '',
-      files: [{ path: 'new.mjs', reason: 'untracked new file — diff 에 없으니 직접 읽어 리뷰할 것' }],
+      files: [{ path: 'new.mjs', reason: 'untracked new file — not in diff, read it directly to review' }],
       untracked: ['new.mjs'],
       ref: 'HEAD',
     }),
     runFn: async (payload) => { sent = payload; return { transport: 'acp', sessionId: 's', result: OK_RESPONSE } },
   })
-  assert.notEqual(r.empty, true, 'diff 가 비었다고 새 파일 리뷰를 건너뛰면 안 된다')
+  assert.notEqual(r.empty, true, 'must not skip reviewing new files just because diff is empty')
   assert.equal(sent.files[0].path, 'new.mjs')
-  assert.match(sent.files[0].reason, /직접 읽어/)
+  assert.match(sent.files[0].reason, /read it directly/)
 })
 
-test('review: 정말 아무 변경도 없을 때만 empty', async () => {
+test('review: empty only when there really are no changes at all', async () => {
   const r = await review({
     collectDiffFn: async () => ({ diff: '', files: [], untracked: [], ref: 'HEAD' }),
-    runFn: async () => { throw new Error('호출되면 안 된다') },
+    runFn: async () => { throw new Error('must not be called') },
   })
   assert.equal(r.empty, true)
 })
 
-test('git: untracked 는 경로만 모으고 내용을 싣지 않는다', async () => {
+test('git: untracked collects only paths, never content', async () => {
   const execFileFn = (_b, args, _o, cb) => {
     if (args[0] === 'rev-parse' && args[1] === '--is-inside-work-tree') return cb(null, 'true\n', '')
     if (args[0] === 'ls-files') return cb(null, 'brand-new.mjs\n', '')
@@ -326,10 +326,10 @@ test('git: untracked 는 경로만 모으고 내용을 싣지 않는다', async 
   const r = await collectDiff({ execFileFn })
   assert.deepEqual(r.untracked, ['brand-new.mjs'])
   assert.equal(r.files.length, 1)
-  assert.equal(r.files[0].excerpt, undefined, '내용은 싣지 않는다 (ADR-003 결정 5)')
+  assert.equal(r.files[0].excerpt, undefined, 'content is never included (ADR-003 decision 5)')
 })
 
-test('git: ref 를 명시하면 작업물 untracked 를 섞지 않는다', async () => {
+test('git: specifying ref does not mix in working-tree untracked files', async () => {
   const calls = []
   const execFileFn = (_b, args, _o, cb) => {
     calls.push(args[0])

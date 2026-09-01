@@ -1,8 +1,8 @@
-// 백그라운드 잡 상태 (설계 §8 잡 수명주기).
+// Background job state (design §8 job lifecycle).
 //
-// 레이아웃: ~/.kiro-bridge/jobs/<cwd-hash>/<job-id>/{meta.json,stdout.log,status}
-// cwd 해시로 스코프해 리포 간 잡이 섞이지 않게 한다. 상태 전이는
-// queued → running → done | failed | cancelled 이며 쓰기는 항상 임시파일+rename.
+// Layout: ~/.kiro-bridge/jobs/<cwd-hash>/<job-id>/{meta.json,stdout.log,status}
+// Scoped by cwd hash so jobs from different repos don't mix. State transitions are
+// queued -> running -> done | failed | cancelled, writes are always tmpfile+rename.
 import { createHash, randomUUID } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import {
@@ -14,7 +14,7 @@ import { bridgeHome } from './config.mjs'
 export const STATUSES = ['queued', 'running', 'done', 'failed', 'cancelled']
 export const TERMINAL = new Set(['done', 'failed', 'cancelled'])
 
-// 유효한 전이만 허용한다. 그 외는 코드 버그이므로 조용히 넘기지 않는다.
+// Only valid transitions are allowed. Anything else is a code bug, so it's never silently passed through.
 const TRANSITIONS = {
   queued: new Set(['running', 'cancelled', 'failed']),
   running: new Set(['done', 'failed', 'cancelled']),
@@ -48,11 +48,11 @@ function writeAtomic(target, contents, mode = 0o600) {
   }
 }
 
-// 같은 ms 에 만든 잡도 생성 순으로 정렬되도록 프로세스 내 단조 카운터를 붙인다.
+// Attach a per-process monotonic counter so jobs created within the same ms still sort by creation order.
 let jobSeq = 0
 
 export function createJob({ cwd = process.cwd(), command, payloadOptions = {} } = {}) {
-  // 시각을 앞세운 id — 디렉토리 나열만으로 시간순이 된다.
+  // A time-prefixed id — simply listing the directory sorts chronologically.
   jobSeq += 1
   const seq = String(jobSeq % 1000).padStart(3, '0')
   const jobId = `${String(Date.now()).padStart(14, '0')}${seq}-${randomUUID().slice(0, 8)}`
@@ -102,7 +102,7 @@ export function transition(jobId, next, cwd = process.cwd()) {
   const job = readJob(jobId, cwd)
   if (!job) throw new Error(`unknown job: ${jobId}`)
   if (TERMINAL.has(job.status)) {
-    // 종결 상태는 불변이다. 취소 경합에서 결과가 뒤집히는 것을 막는다.
+    // Terminal state is immutable. Prevents a cancel race from flipping the result.
     return job.status
   }
   const allowed = TRANSITIONS[job.status]
@@ -144,8 +144,8 @@ export function listJobs({ cwd = process.cwd(), includeTerminal = true } = {}) {
     .filter((job) => includeTerminal || !TERMINAL.has(job.status))
 }
 
-// 살아있는 잡인지 판단. PID 재사용까지는 구분하지 못하므로(플랫폼 의존),
-// running 인데 프로세스가 없으면 고아로 보고 failed 처리한다.
+// Determine whether the job is alive. PID reuse can't be distinguished (platform-dependent),
+// so a job marked running with no live process is treated as orphaned and marked failed.
 export function isProcessAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false
   try {
@@ -171,7 +171,7 @@ export function reapOrphans(cwd = process.cwd()) {
 export function cancelJob(jobId, { cwd = process.cwd(), killFn = (pid) => process.kill(pid, 'SIGTERM') } = {}) {
   const job = readJob(jobId, cwd)
   if (!job) return { ok: false, reason: `unknown job: ${jobId}` }
-  if (TERMINAL.has(job.status)) return { ok: false, reason: `이미 종결됨 (${job.status})` }
+  if (TERMINAL.has(job.status)) return { ok: false, reason: `already terminal (${job.status})` }
 
   if (job.meta.pid && isProcessAlive(job.meta.pid)) {
     try {
@@ -184,7 +184,7 @@ export function cancelJob(jobId, { cwd = process.cwd(), killFn = (pid) => proces
   return { ok: true, jobId }
 }
 
-// 종결된 잡을 보존기간 이후 정리한다. finishedAt 이 없으면 디렉토리 mtime 을 쓴다.
+// Clean up terminal jobs past the retention period. Falls back to directory mtime when finishedAt is missing.
 export function gcJobs({ cwd = process.cwd(), retentionDays = 30, now = Date.now() } = {}) {
   const cutoff = now - retentionDays * 24 * 60 * 60 * 1000
   const removed = []

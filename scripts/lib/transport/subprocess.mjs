@@ -1,8 +1,8 @@
-// 폴백 transport: kiro-cli chat --no-interactive --output-format stream-json.
+// Fallback transport: kiro-cli chat --no-interactive --output-format stream-json.
 //
-// ACP 능력 감지가 실패했을 때만 쓴다 (ADR-001R 결정 1). 상위 계약은 동일하되
-// 이 경로에는 역방향 권한 요청이 없다 — 미신뢰 툴은 묻지 않고 자동 거부되므로
-// onPermissionRequest 는 "항상 거부"로 축약되고, denial detector 가 그것을 잡는다.
+// Used only when ACP capability detection fails (ADR-001R decision 1). The
+// upper-layer contract is the same, but this path has no reverse permission request — untrusted tools are
+// auto-denied without prompting, so onPermissionRequest collapses to "always deny", caught by the denial detector.
 import { spawn } from 'node:child_process'
 import { createLineSplitter, normalizeStreamJsonLine, createCollector } from './events.mjs'
 import { bridgeError, classifyOutput, CODES } from '../errors.mjs'
@@ -54,7 +54,7 @@ export async function run(payload, options = {}) {
   const onAbort = () => { try { child.kill('SIGTERM') } catch {} }
   signal?.addEventListener('abort', onAbort, { once: true })
 
-  // 페이로드는 크기와 무관하게 항상 stdin 파이프로 (ADR-003 결정 4).
+  // The payload always goes through the stdin pipe, regardless of size (ADR-003 decision 4).
   try {
     child.stdin.write(JSON.stringify(payload))
     child.stdin.end()
@@ -91,7 +91,7 @@ export async function run(payload, options = {}) {
   }
 
   return {
-    sessionId: null, // 원샷 경로에는 재사용할 세션이 없다
+    sessionId: null, // there is no session to reuse on the one-shot path
     transport: 'subprocess',
     result: collector.text,
     metadata: collector.metadata,

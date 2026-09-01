@@ -1,6 +1,7 @@
 ---
-description: 이 저장소의 Kiro 잡 목록과 누적 사용량을 보여준다
+description: Show this repo's Kiro job list and accumulated usage
 ---
 
-`node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" status` 를 실행하고
-결과를 그대로 보고하라. 고아 잡 정리와 오래된 잡 GC 가 함께 수행된다.
+Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" status` and report the
+result as-is. Orphan-job cleanup and GC of old jobs happen automatically as
+part of this.

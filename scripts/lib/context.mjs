@@ -1,13 +1,13 @@
-// 구조화 컨텍스트 핸드오프 빌더 + 아웃바운드 redaction (ADR-003, 설계 §5·§7).
+// Structured context handoff builder + outbound redaction (ADR-003, design §5, §7).
 //
-// 여기서 만든 페이로드가 그대로 AWS로 나가므로, 빌드의 마지막 단계는 항상
-// redaction 이다. 무엇이 포함됐는지는 코드로 결정되고 로그로 남는다.
+// The payload built here goes straight out to AWS, so the last step of the
+// build is always redaction. What gets included is decided by code and logged.
 import { basename } from 'node:path'
 
 export const KINDS = ['review', 'task', 'spec']
 
-// excerpt 는 전체 삽입이 아니라 진입점 안내 수준으로 최소화한다 — Kiro 는
-// read/grep 으로 스스로 읽을 수 있고, 과대 삽입은 컨텍스트를 밀어낸다 (ADR-003).
+// excerpt is minimized to entry-point guidance, not a full insertion — Kiro
+// can read the file itself via read/grep, and over-insertion crowds out context (ADR-003).
 export const LIMITS = {
   goal: 1000,
   diff: 200_000,
@@ -22,8 +22,8 @@ const AWS_ACCESS_KEY = /\b(?:AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ABIA|ACCA)[
 const PEM_BLOCK = /-----BEGIN(?:[A-Z ]*)PRIVATE KEY-----[\s\S]*?-----END(?:[A-Z ]*)PRIVATE KEY-----/g
 const ASSIGNED_SECRET =
   /\b(aws_secret_access_key|aws_session_token|password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(\s*[=:]\s*)(["']?)([^\s"'`,;]{6,})\3/gi
-// 고엔트로피 후보. 대문자·소문자·숫자를 모두 포함하는 32자 이상만 본다 —
-// git SHA(소문자 hex)와 일반 식별자를 태우지 않기 위한 의도적 제약이다.
+// High-entropy candidate. Only considers 32+ chars containing upper, lower, and digits —
+// a deliberate constraint to avoid flagging git SHAs (lowercase hex) and ordinary identifiers.
 const ENTROPY_CANDIDATE = /[A-Za-z0-9+/=_-]{32,}/g
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g
 
@@ -43,7 +43,7 @@ function looksMixedCharset(str) {
   return /[a-z]/.test(str) && /[A-Z]/.test(str) && /[0-9]/.test(str)
 }
 
-// glob-lite: `*` 만 지원한다. 경로 전체와 basename 양쪽에 대해 검사한다.
+// glob-lite: only `*` is supported. Checked against both the full path and the basename.
 function globToRegExp(pattern) {
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')
   return new RegExp(`^${escaped}$`, 'i')
@@ -69,7 +69,7 @@ function stripControlChars(value) {
   return value.replace(CONTROL_CHARS, '')
 }
 
-// 텍스트 한 덩어리에 대한 마스킹. 무엇을 몇 번 가렸는지 함께 돌려준다.
+// Masking for one chunk of text. Also returns what was masked and how many times.
 export function redactText(text, options = {}) {
   const { privateHosts = [], entropyThreshold = 4.2, minSecretLength = 32 } = options
   const hits = []
@@ -116,7 +116,7 @@ export function redactText(text, options = {}) {
   return { text: out, hits }
 }
 
-// 핸드오프 페이로드 조립. 반환값의 redactions 가 감사 로그 겸 --dry-run 표시용이다.
+// Assembles the handoff payload. The return value's redactions doubles as an audit log and --dry-run display.
 export function buildPayload(input, options = {}) {
   const { kind, goal } = input
   if (!KINDS.includes(kind)) {

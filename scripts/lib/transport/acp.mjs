@@ -1,7 +1,7 @@
-// 1차 transport: kiro-cli acp (stdio JSON-RPC). ADR-001R.
+// Primary transport: kiro-cli acp (stdio JSON-RPC). ADR-001R.
 //
-// 이 경로에서만 얻는 것: 스트리밍, 취소, 세션 재사용, 그리고 권한 브로커링.
-// session/request_permission 을 Claude Code 판단으로 중재하는 것이 핵심이다.
+// What this path uniquely gives us: streaming, cancellation, session reuse,
+// and permission brokering. The core piece is mediating session/request_permission through Claude Code's judgment.
 import { spawn } from 'node:child_process'
 import { JsonRpcClient } from './jsonrpc.mjs'
 import { normalizeAcpUpdate, createCollector, EVENT_TYPES } from './events.mjs'
@@ -16,8 +16,7 @@ function initializeParams() {
   }
 }
 
-// 핸드셰이크만 돌려 ACP 사용 가능 여부를 본다. 프롬프트를 보내지 않으므로
-// 크레딧을 쓰지 않는다.
+// Runs only the handshake to check ACP availability. No prompt is sent, so no credits are spent.
 export async function probe({ bin = 'kiro-cli', spawnFn = spawn, timeoutMs = 5000 } = {}) {
   let child
   try {
@@ -87,7 +86,7 @@ export async function run(payload, options = {}) {
     },
     onRequest: async (msg) => {
       if (msg.method !== 'session/request_permission') return {}
-      // 권한 브로커링. 핸들러가 없으면 거부가 기본값이다 (ADR-002).
+      // Permission brokering. Denial is the default if there's no handler (ADR-002).
       const decision = onPermissionRequest
         ? await onPermissionRequest(msg.params)
         : { outcome: 'cancelled' }
@@ -101,8 +100,8 @@ export async function run(payload, options = {}) {
   child.stdout.on('data', (c) => client.feed(c))
   child.stderr.on('data', (c) => { stderr += String(c) })
 
-  // 프로세스가 죽으면 대기 중인 요청을 즉시 깨운다. 이걸 안 하면 미인증·크래시가
-  // 전부 타임아웃으로 오분류되고, 실패를 아는 데 timeoutMs 만큼 걸린다.
+  // If the process dies, pending requests are woken up immediately. Without
+  // this, auth failures and crashes get misclassified as timeouts, and finding out takes timeoutMs.
   const exited = new Promise((resolve) => {
     child.on('close', (code) => {
       client.close(bridgeError(CODES.PROTOCOL, { reason: 'kiro-cli exited', exitCode: code }))
@@ -138,7 +137,7 @@ export async function run(payload, options = {}) {
       if (!sessionId) throw bridgeError(CODES.PROTOCOL, { reason: 'session/new returned no sessionId' })
     }
 
-    // 페이로드는 항상 프롬프트 본문으로 넘긴다 (ADR-003 결정 4).
+    // The payload is always passed as the prompt body (ADR-003 decision 4).
     const promptResult = await client.request('session/prompt', {
       sessionId,
       prompt: [{ type: 'text', text: JSON.stringify(payload) }],
@@ -146,7 +145,7 @@ export async function run(payload, options = {}) {
 
     if (signal?.aborted) throw bridgeError(CODES.CANCELLED, { sessionId })
 
-    // 툴 거부를 감지했으면 findings 신뢰를 취소하고 오류로 승격한다 (설계 §8).
+    // If a tool denial is detected, revoke trust in findings and promote to an error (design §8).
     if (collector.denied) {
       throw bridgeError(CODES.TOOL_DENIED, { sessionId, denials: collector.denials })
     }

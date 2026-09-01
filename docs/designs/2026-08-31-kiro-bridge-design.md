@@ -1,260 +1,294 @@
-# kiro-bridge 설계
+# kiro-bridge Design
 
-> 2026-08-31 v2 (설계 리뷰 반영). Claude Code 안에서 Kiro CLI를 활용하는 플러그인.
-> 목적: (1) 일상 실사용 (2) 검증되면 포트폴리오 공개.
+> 2026-08-31 v2 (incorporates design review). A plugin for using Kiro CLI from
+> inside Claude Code.
+> Purpose: (1) daily real-world use (2) publish as a portfolio piece once validated.
 >
-> **검증 환경**: kiro-cli 2.20.1 / macOS 15 / 2026-08-31.
-> 외부 사실 주장에는 검증 명령을 병기한다. v1 초안은 kiro-cli v1.29 시점
-> 정보에 기반해 ACP를 미래 과제로 놓았으나, 2.20.1 실측으로 반증되어
-> 전면 재구성했다 (ADR-001 → Superseded, ADR-001R).
+> **Verified environment**: kiro-cli 2.20.1 / macOS 15 / 2026-08-31.
+> Every external factual claim is paired with a verification command. The v1
+> draft was based on information from kiro-cli v1.29 and treated ACP as future
+> work, but that premise was disproved by measurement against 2.20.1, so the
+> design was rebuilt from the ground up (ADR-001 → Superseded, ADR-001R).
 
-## 1. 포지셔닝 — 무엇을 기여하는가
+## 1. Positioning — what this contributes
 
-Claude Code에서 Kiro CLI를 부르는 가장 단순한 경로는 프롬프트 문자열을
-`kiro-cli chat --no-interactive`에 넘기는 원샷 호출이다. kiro-bridge는 그
-경로로는 성립하지 않는 두 축을 기여한다.
+The simplest way to call Kiro CLI from inside Claude Code is a one-shot call
+that hands a prompt string to `kiro-cli chat --no-interactive`. kiro-bridge
+contributes two axes that don't hold up on that path.
 
-**축 1 — ACP 네이티브 통합.** kiro-cli 2.20.1은 `kiro-cli acp` 서브커맨드로
-Agent Client Protocol을 정식 제공한다 (검증: `kiro-cli acp --help`,
-initialize→session/new 핸드셰이크 왕복 확인). 이를 1차 transport로 써서:
-- 스트리밍 진행 상황 (`session/update`) — Kiro의 툴 호출이 실시간으로 보임
-- 취소 (`session/cancel`), 세션 재사용 (`session/load`, 후속 질문에 컨텍스트 재전송 불필요)
-- **권한 브로커링**: Kiro의 `session/request_permission`을 Claude Code 쪽
-  판단으로 중재. 정적 신뢰 목록보다 강한, 대화형 권한 모델.
+**Axis 1 — ACP-native integration.** kiro-cli 2.20.1 ships the Agent Client
+Protocol as a first-class citizen via the `kiro-cli acp` subcommand (verified:
+`kiro-cli acp --help`, confirmed round trip of the initialize→session/new
+handshake). Using it as the primary transport gives us:
+- Streaming progress (`session/update`) — Kiro's tool calls become visible in real time
+- Cancellation (`session/cancel`), session reuse (`session/load`, no need to resend context on follow-up questions)
+- **Permission brokering**: `session/request_permission` from Kiro is mediated
+  by Claude Code's own judgment. A more capable, interactive permission model
+  than a static trust list.
 
-원샷 서브프로세스 호출은 요청-응답 한 번으로 끝나므로 위 네 가지가
-구조적으로 성립하지 않는다.
+A one-shot subprocess call ends after a single request-response round trip, so
+none of the above four are structurally possible.
 
-**축 2 — 구조화 컨텍스트 핸드오프.** 프롬프트 문자열 대신 diff·관련 파일
-발췌·테스트 실패 출력을 구조화 페이로드로 넘기고, 응답을 severity 붙은
-findings JSON으로 받는다 (ADR-003). 페이로드가 결정적이라 실패를 재현하고
-회귀 테스트할 수 있다. **이 축은 실사용 가설이며, 평가 하네스로 검증한다** (§9).
+**Axis 2 — structured context handoff.** Instead of a prompt string, we hand
+over a structured payload of diff, relevant file excerpts, and test-failure
+output, and receive back findings JSON with severity attached (ADR-003).
+Because the payload is deterministic, failures can be reproduced and
+regression-tested. **This axis is a real-world-use hypothesis, and it is
+validated with an evaluation harness** (§9).
 
-**왜 Kiro 내장 기능으로 안 되는가**: Kiro는 `--trust-tools` 툴 단위 신뢰,
-커스텀 에이전트, spec/planner 모드를 이미 내장한다. kiro-bridge의 기여는
-그 기능들의 재발명이 아니라 **Claude Code 세션과의 접속면**이다 — Claude가
-가진 컨텍스트(diff, 실패 테스트)를 구조화해 넘기고, Kiro의 스트림·권한
-요청·findings를 Claude 세션 안으로 되가져오는 부분은 Kiro 단독으로 성립하지
-않는다. spec 파이프라인은 차별화가 아니라 Kiro 네이티브 `--mode spec`을
-호출하는 통합 시나리오로만 다룬다 (§2.3).
+**Why this can't just be Kiro's built-in features**: Kiro already has
+tool-level trust via `--trust-tools`, custom agents, and a spec/planner mode
+built in. kiro-bridge's contribution isn't reinventing those features — it's
+**the interface surface with the Claude Code session**. Structuring the
+context Claude already holds (diff, failing tests) and handing it over, then
+bringing Kiro's streams, permission requests, and findings back into the
+Claude session — none of that is achievable by Kiro alone. The spec pipeline
+isn't a differentiator; it's handled purely as an integration scenario that
+invokes Kiro's native `--mode spec` (§2.3).
 
-## 2. 사용 시나리오 (실사용 우선순위 순)
+## 2. Usage scenarios (in order of real-world priority)
 
-1. **리뷰 세컨드 오피니언**: Claude가 작업을 마친 diff를 Kiro가 리뷰.
-   `/kiro-bridge:review` → findings JSON → Claude가 반영 여부 판단 (자동 적용 없음, ADR-004).
-2. **작업 위임**: 조사·디버깅을 Kiro에 위임. `/kiro-bridge:task [--bg]` → `/kiro-bridge:result`.
-3. **spec 파이프라인**: Kiro 네이티브 spec/planner 모드로 requirements/design
-   정제 → Claude Code가 구현. (Kiro `--mode spec` 출력 형식 실측 후 설계 확정 — §10)
-4. **AWS 자문**: 인프라 코드(CDK/IAM)에 대해 `use_aws`를 읽기 전용·서비스
-   제한으로 좁힌 advisor 에이전트로 질의.
+1. **Review second opinion**: Kiro reviews a diff Claude just produced.
+   `/kiro-bridge:review` → findings JSON → Claude decides whether to apply
+   them (no auto-apply, ADR-004).
+2. **Task delegation**: delegate investigation/debugging to Kiro.
+   `/kiro-bridge:task [--bg]` → `/kiro-bridge:result`.
+3. **Spec pipeline**: refine requirements/design using Kiro's native
+   spec/planner mode → Claude Code implements. (Design finalized after
+   measuring Kiro's `--mode spec` output format — §10)
+4. **AWS advisory**: query an advisor agent scoped to read-only,
+   service-restricted `use_aws` for infrastructure code (CDK/IAM).
 
-## 3. 아키텍처
+## 3. Architecture
 
 ```
 plugins/kiro-bridge/
 ├── .claude-plugin/plugin.json
 ├── commands/            # setup, review, task, spec, result, status, cancel
-├── kiro-agents/         # Kiro 커스텀 에이전트 정의(JSON) — 권한 명세의 SSOT
-│   ├── kiro-bridge-reviewer.json   # 읽기 툴 명시 신뢰, 쓰기 미신뢰 (Phase 1)
-│   ├── kiro-bridge-spec-writer.json# 쓰기는 .kiro/specs/ 하위만 (Phase 2)
-│   ├── kiro-bridge-researcher.json # 읽기 + web_search/web_fetch (Phase 2)
-│   └── kiro-bridge-aws-advisor.json# use_aws 읽기 전용·서비스 제한 (Phase 2)
+├── kiro-agents/         # Kiro custom agent definitions (JSON) — SSOT for permission specs
+│   ├── kiro-bridge-reviewer.json   # explicit trust on read tools, no write trust (Phase 1)
+│   ├── kiro-bridge-spec-writer.json# writes limited to under .kiro/specs/ (Phase 2)
+│   ├── kiro-bridge-researcher.json # read + web_search/web_fetch (Phase 2)
+│   └── kiro-bridge-aws-advisor.json# use_aws, read-only, service-restricted (Phase 2)
 ├── scripts/
-│   ├── bridge.mjs       # 엔트리포인트 (커맨드 라우팅)
+│   ├── bridge.mjs       # entry point (command routing)
 │   └── lib/
 │       ├── transport/
-│       │   ├── index.mjs      # 능력 감지(버전 키로 캐시) → acp | subprocess
-│       │   ├── acp.mjs        # 1차: kiro-cli acp (stdio JSON-RPC)
-│       │   └── subprocess.mjs # 폴백: chat --no-interactive --output-format stream-json
-│       ├── context.mjs  # 핸드오프 페이로드 빌더 + 아웃바운드 redaction (§7)
-│       ├── findings.mjs # 응답 파싱 → 구조화 findings + 신뢰 경계 래핑 (ADR-004)
-│       ├── jobs.mjs     # 백그라운드 잡 상태 (§8)
+│       │   ├── index.mjs      # capability detection (cached by version key) → acp | subprocess
+│       │   ├── acp.mjs        # primary: kiro-cli acp (stdio JSON-RPC)
+│       │   └── subprocess.mjs # fallback: chat --no-interactive --output-format stream-json
+│       ├── context.mjs  # handoff payload builder + outbound redaction (§7)
+│       ├── findings.mjs # response parsing → structured findings + trust-boundary wrapping (ADR-004)
+│       ├── jobs.mjs     # background job state (§8)
 │       └── config.mjs   # ~/.kiro-bridge/config.json
-└── skills/              # 커맨드별 상세 사용법 SKILL.md
+└── skills/              # per-command detailed usage SKILL.md
 ```
 
-원칙:
-- 외부 프로세스는 `execFile`/`spawn` 직접 호출만. 셸 문자열 조립 금지.
-- 네트워크 코드 0줄 — 모든 통신은 kiro-cli 바이너리를 통해서만.
-- 상태·설정은 `~/.kiro-bridge/` 하위. 예외: 커스텀 에이전트는 Kiro 규약상
-  `~/.kiro/agents/kiro-bridge-*.json` (접두사로 네임스페이스 격리, §6).
-- Stop 훅 없음. 훅은 SessionStart/End 라이프사이클 정리용만.
-- 프롬프트 페이로드는 **항상 stdin 파이프**로 전달 (인자 크기 분기 자체를 제거).
+Principles:
+- External processes are invoked only via direct `execFile`/`spawn` calls. No shell string assembly.
+- Zero lines of network code — all communication goes through the kiro-cli binary only.
+- State/config lives under `~/.kiro-bridge/`. Exception: custom agents must
+  follow Kiro's convention of `~/.kiro/agents/kiro-bridge-*.json`
+  (namespace-isolated via prefix, §6).
+- No Stop hook. Hooks are only for SessionStart/End lifecycle cleanup.
+- Prompt payloads are **always delivered via stdin pipe** (eliminating the
+  argument-size branching decision entirely).
 
-### Transport 인터페이스 (ADR-001R)
+### Transport interface (ADR-001R)
 
-원샷 `exec()`로는 ACP의 스트리밍·역방향 권한 요청을 표현할 수 없으므로
-이벤트 기반으로 정의한다:
+A one-shot `exec()` cannot express ACP's streaming and reverse permission
+requests, so it's defined event-driven instead:
 
 ```js
 transport.run(payload, {
   agent, model, effort,
-  onEvent,             // session/update 스트림 (subprocess는 stream-json으로 동일 계약)
-  onPermissionRequest, // ACP: Claude Code로 브로커링 / subprocess: 항상 거부로 축약
-  signal,              // AbortSignal → session/cancel 또는 프로세스 kill
+  onEvent,             // session/update stream (subprocess uses the same contract via stream-json)
+  onPermissionRequest, // ACP: brokered to Claude Code / subprocess: always collapsed to denial
+  signal,              // AbortSignal → session/cancel or process kill
 }) → { sessionId, result }
 ```
 
-능력 감지 결과는 kiro-cli 버전을 키로 `~/.kiro-bridge/config.json`에 캐시.
+Capability detection results are cached in `~/.kiro-bridge/config.json`, keyed by kiro-cli version.
 
-## 4. 커맨드 설계
+## 4. Command design
 
-| 커맨드 | Phase | 동작 | 기본 에이전트/권한 | 기본 model/effort |
+| Command | Phase | Behavior | Default agent/permission | Default model/effort |
 |---|---|---|---|---|
-| `/kiro-bridge:setup` | 1 | 설치·로그인 확인, 에이전트 설치 + `agent validate` | - | - |
-| `/kiro-bridge:review [ref]` | 1 | diff 컨텍스트 → findings | reviewer (읽기 신뢰) | sonnet 계열 / medium |
-| `/kiro-bridge:task <설명> [--bg] [--write]` | 2 | 작업 위임 | 기본 읽기 / `--write`→scoped 에이전트 | auto |
-| `/kiro-bridge:spec <기능>` | 2 | 네이티브 spec 모드 → `.kiro/specs/` | spec-writer | 상위 모델 / high |
-| `/kiro-bridge:result [id] [--follow-up <질문>]` | 2 | 잡 결과 회수, 세션 이어서 후속 질문 | - | - |
-| `/kiro-bridge:status` / `/kiro-bridge:cancel` | 2 | 잡 목록·누적 크레딧 / 취소 | - | - |
+| `/kiro-bridge:setup` | 1 | Verify install/login, install agents + `agent validate` | - | - |
+| `/kiro-bridge:review [ref]` | 1 | diff context → findings | reviewer (read-trusted) | sonnet family / medium |
+| `/kiro-bridge:task <description> [--bg] [--write]` | 2 | Delegate a task | read-only by default / `--write`→scoped agent | auto |
+| `/kiro-bridge:spec <feature>` | 2 | Native spec mode → `.kiro/specs/` | spec-writer | higher-tier model / high |
+| `/kiro-bridge:result [id] [--follow-up <question>]` | 2 | Retrieve job result, continue session with follow-up | - | - |
+| `/kiro-bridge:status` / `/kiro-bridge:cancel` | 2 | Job list & accumulated credits / cancel | - | - |
 
-- 커맨드 네임스페이스는 **플러그인 이름**이다 (`plugin.json` 의 `name`).
-  초안의 `/kiro:*` 는 플러그인 이름이 `kiro` 여야 나오므로 도달 불가였고,
-  실제 이름 `kiro-bridge` 에 맞춰 `/kiro-bridge:*` 로 정정했다
-  (확인: 설치된 플러그인 `oh-my-claudecode` + `commands/hud.md` → `/oh-my-claudecode:hud`).
-- `--trust-all-tools`가 기본값이 되는 코드 경로는 만들지 않는다 (ADR-002).
-  전권은 `--yolo` 명시 + 실행 전 확인으로만.
-- model/effort는 커맨드별 기본값 + `--model`/`--effort` 오버라이드.
-  호출별 크레딧 소모를 `~/.kiro-bridge/usage.jsonl`에 적재하고
-  `/kiro-bridge:status`에 누적 표시.
+- Command namespace is the **plugin name** (`plugin.json`'s `name`). The
+  draft's `/kiro:*` would only be reachable if the plugin name were `kiro`, so
+  it was unreachable; it's corrected to `/kiro-bridge:*` to match the actual
+  name `kiro-bridge` (confirmed against the installed plugin
+  `oh-my-claudecode` + `commands/hud.md` → `/oh-my-claudecode:hud`).
+- No code path where `--trust-all-tools` becomes the default is ever created
+  (ADR-002). Full trust is only opened via explicit `--yolo` + a
+  pre-execution confirmation.
+- model/effort have per-command defaults with `--model`/`--effort`
+  overrides. Per-call credit consumption is logged to
+  `~/.kiro-bridge/usage.jsonl` and shown cumulatively in `/kiro-bridge:status`.
 
-## 5. 컨텍스트 핸드오프 (ADR-003)
+## 5. Context handoff (ADR-003)
 
-요청 페이로드 (Claude → Kiro, stdin):
+Request payload (Claude → Kiro, stdin):
 
 ```json
 {
   "kind": "review | task | spec",
-  "goal": "한 문장 목표",
-  "diff": "git diff 출력 (리뷰 시)",
+  "goal": "one-sentence goal",
+  "diff": "git diff output (for reviews)",
   "files": [{ "path": "...", "reason": "why included", "excerpt": "..." }],
   "signals": { "failing_tests": "...", "lint": "...", "notes": "..." },
-  "constraints": ["수정 금지 영역", "스타일 규칙 등"]
+  "constraints": ["areas not to modify", "style rules, etc."]
 }
 ```
 
-Kiro는 `read`/`grep` 툴로 스스로 파일을 읽을 수 있으므로, `files.excerpt`는
-전체 삽입이 아니라 **진입점 안내** 수준으로 최소화한다 (컨텍스트 밀어내기
-방지). ACP `_kiro.dev/metadata`의 `contextUsagePercentage`를 받아 페이로드
-과대 삽입을 경고한다.
+Since Kiro can read files itself via the `read`/`grep` tools, `files.excerpt`
+is kept to entry-point-level guidance rather than full inclusion (to avoid
+context displacement). The `contextUsagePercentage` from ACP's
+`_kiro.dev/metadata` is used to warn against over-stuffing the payload.
 
-응답 계약 (Kiro → Claude, 에이전트 프롬프트로 요구, best-effort):
+Response contract (Kiro → Claude, required via agent prompt, best-effort):
 
 ```json
 {
   "findings": [{
     "severity": "low | medium | high",
     "file": "path", "line": 0,
-    "claim": "한 문장 결함 서술",
-    "evidence": "근거", "suggestion": "수정 방향"
+    "claim": "one-sentence description of the defect",
+    "evidence": "supporting evidence", "suggestion": "suggested fix direction"
   }],
-  "summary": "전체 판단"
+  "summary": "overall assessment"
 }
 ```
 
-- severity별 기본 동작: high=반드시 검토, medium=제안으로 표시, low=기록만.
-- 파싱 실패는 오류가 아니다 — 원문 그대로 반환하되, **신뢰 경계 래핑은
-  파싱 성공/실패와 무관하게 항상 적용** (ADR-004).
+- Default handling by severity: high=must review, medium=shown as a suggestion, low=logged only.
+- A parsing failure is not an error — the raw text is returned as-is, but
+  **trust-boundary wrapping always applies regardless of parse success or
+  failure** (ADR-004).
 
-## 6. 커스텀 에이전트 관리
+## 6. Custom agent management
 
-- 모든 번들 에이전트는 `kiro-bridge-` 접두사 — 사용자 소유 공간
-  (`~/.kiro/agents/`)에서의 이름 충돌 방지.
-- 에이전트 JSON에 버전 스탬프를 넣고, `/kiro-bridge:setup`이 해시 비교 →
-  사용자가 수정한 파일은 덮어쓰지 않고 경고.
-- 설치 시 `kiro-cli agent validate --path <file>` 필수 통과
-  (검증: `kiro-cli agent --help`에 validate 존재).
-- **tool 이름 주의**: `--trust-tools` 도움말 예시는 `fs_read,fs_write`인데
-  session/new 응답의 built-in 목록은 `read, write, shell, grep, glob,
-  use_aws, web_search, ...`로 상이하다. 에이전트 초안 작성 시 실측으로
-  확정하고 validate로 검증한다 (§10 Open Question).
+- Every bundled agent uses the `kiro-bridge-` prefix — prevents name
+  collisions in the user's own space (`~/.kiro/agents/`).
+- A version stamp is embedded in each agent JSON, and `/kiro-bridge:setup`
+  compares hashes → files modified by the user are not overwritten, only warned about.
+- Installation requires passing `kiro-cli agent validate --path <file>`
+  (verified: `validate` exists in `kiro-cli agent --help`).
+- **A note on tool names**: the `--trust-tools` help example uses
+  `fs_read,fs_write`, but the built-in list in the `session/new` response is
+  `read, write, shell, grep, glob, use_aws, web_search, ...` — different. This
+  is nailed down empirically when drafting agents and confirmed via validate
+  (§10 Open Question).
 
-## 7. 아웃바운드 방어 (redaction)
+## 7. Outbound defense (redaction)
 
-diff·발췌·테스트 출력이 AWS로 전송되므로 `context.mjs`에 전송 전 단계를 둔다:
+Since diffs, excerpts, and test output are transmitted to AWS, `context.mjs`
+has a pre-send stage:
 
-- 파일 제외 목록: `.env*`, `*.pem`, `*credentials*`, `*.key` 등.
-- 패턴 마스킹: AWS 액세스 키, 고엔트로피 문자열, private 호스트명(설정 가능).
-- `--dry-run`: 전송 직전 페이로드를 사람이 확인.
-- 전송 페이로드 로그(`~/.kiro-bridge/`)는 0600 권한 + 보존기간 설정.
+- File exclusion list: `.env*`, `*.pem`, `*credentials*`, `*.key`, etc.
+- Pattern masking: AWS access keys, high-entropy strings, private hostnames (configurable).
+- `--dry-run`: lets a human review the payload right before it's sent.
+- Transmitted payload logs (`~/.kiro-bridge/`) get 0600 permissions + a configurable retention period.
 
-## 8. 실패 모드와 잡 수명주기
+## 8. Failure modes and job lifecycle
 
-### 실패 모드 (Phase 1 필수)
+### Failure modes (Phase 1 required)
 
-| 실패 | 감지 | 사용자 표시 | 재시도 |
+| Failure | Detection | Shown to user | Retry |
 |---|---|---|---|
-| 타임아웃 | 커맨드별 기본(review 180s, task 600s), `--timeout` | 부분 출력 + 타임아웃 명시 | 안 함 |
-| 미인증 | `kiro-cli whoami` 실패 | `kiro-cli login` 안내 | 안 함 |
-| 크레딧/스로틀 | 오류 패턴 매칭 | 소진 안내 + usage 표시 | 안 함 |
-| **툴 거부** | 출력/이벤트의 `[denied]` 감지 | findings 신뢰 취소, "권한 부족" 오류로 승격 | 안 함 |
-| 파싱 실패 | JSON 추출 실패 | 원문 반환 + 구조화 실패 표시 | 안 함 |
+| Timeout | Per-command default (review 180s, task 600s), `--timeout` | Partial output + timeout explicitly noted | No |
+| Unauthenticated | `kiro-cli whoami` fails | Guidance to run `kiro-cli login` | No |
+| Credit/throttling | Error pattern matching | Exhaustion notice + usage display | No |
+| **Tool denial** | Detect `[denied]` in output/events | Findings trust revoked, escalated to "insufficient permission" error | No |
+| Parse failure | JSON extraction fails | Raw text returned + structuring-failure indicator shown | No |
 
-툴 거부가 특히 중요하다: non-interactive 모드는 미신뢰 툴 호출을 묻지 않고
-자동 거부하며 대화는 계속되므로(검증: 바이너리 오류 문자열), 감지하지
-않으면 "파일을 못 읽고 만든 그럴듯한 findings"를 성공으로 오인한다.
-→ reviewer 에이전트는 읽기 툴을 **명시적으로 pre-trust**하고, transport에
-denial detector를 둔다.
+Tool denial matters especially: non-interactive mode auto-denies untrusted
+tool calls without asking, and the conversation continues (verified via the
+binary's error string), so without detection, "plausible-sounding findings
+built without reading the file" gets mistaken for success. → The reviewer
+agent **explicitly pre-trusts** read tools, and a denial detector is placed
+in the transport layer.
 
-### 잡 수명주기 (Phase 2)
+### Job lifecycle (Phase 2)
 
-- 레이아웃: `~/.kiro-bridge/jobs/<cwd-hash>/<job-id>/{meta.json,stdout.log,status}`
-  — cwd 스코프로 리포 간 잡 혼선 방지.
-- 상태 전이: `queued → running → done | failed | cancelled`. 상태 쓰기는
-  임시파일+rename으로 원자적.
-- 백그라운드는 `detached + unref`, stdio는 파일 리다이렉트.
-- 취소는 PID 재사용 대비 job-id→PID+시작시각 대조 후 kill (ACP면 session/cancel).
-- 완료 후 30일 GC. SessionEnd 훅은 고아 프로세스 정리만 하고 잡 결과는 보존.
-- 잡 메타에 `sessionId` 저장 → `/kiro-bridge:result --follow-up`이 `session/load`로
-  컨텍스트 재전송 없이 후속 질문.
+- Layout: `~/.kiro-bridge/jobs/<cwd-hash>/<job-id>/{meta.json,stdout.log,status}`
+  — scoped by cwd to prevent job mixups across repos.
+- State transitions: `queued → running → done | failed | cancelled`. State
+  writes are atomic via temp-file + rename.
+- Background runs are `detached + unref`, with stdio redirected to files.
+- Cancellation guards against PID reuse by matching job-id → PID + start time before killing (or `session/cancel` for ACP).
+- 30-day GC after completion. The SessionEnd hook only cleans up orphan
+  processes and preserves job results.
+- `sessionId` is stored in job metadata → `/kiro-bridge:result --follow-up`
+  uses `session/load` for follow-up questions without resending context.
 
-## 9. 평가 하네스 (포트폴리오 핵심)
+## 9. Evaluation harness (portfolio centerpiece)
 
-축 2는 가설이므로 검증한다: 실제 diff 15~20개에 대해
-(A) 프롬프트 문자열만 vs (B) 구조화 핸드오프를 돌리고, gold findings 대비
-precision/recall + 크레딧 + 지연을 `docs/evaluation/`에 재현 스크립트와 함께
-기록한다. **결과가 "차이 없음"이어도 그대로 공개한다** — 반증 가능한 설계
-자체가 산출물이다.
+Axis 2 is a hypothesis, so it's validated: across 15–20 real diffs, run (A)
+prompt-string-only vs (B) structured handoff, and record
+precision/recall-against-gold-findings + credits + latency in
+`docs/evaluation/`, along with a reproduction script. **Even if the result is
+"no difference," it's published as-is** — a falsifiable design is itself the
+deliverable.
 
-## 10. 로드맵 / Open Questions
+## 10. Roadmap / Open Questions
 
-- **Phase 1 — 리뷰 단일 축**: ACP transport(+subprocess 폴백) + 컨텍스트
-  빌더/redaction + reviewer 에이전트 + `/kiro-bridge:setup` `/kiro-bridge:review` +
-  실패 모드 표 구현. 유닛 테스트 동반.
-  → **완료 + 실기기 검증 통과 (2026-09-01).** setup 전 단계 green
-  (transport: acp, 에이전트 5종 validate 통과), 합성 저장소에 심은 버그
-  (off-by-one·하드코딩 키)를 review 실왕복 21초 만에 high 2건으로 전부 검출.
-- **Phase 2**: `/kiro-bridge:task`(fg/bg), 잡 수명주기, spec 파이프라인,
-  나머지 에이전트, `--follow-up`, usage 계측.
-  → **코드 완료 (2026-09-01, 테스트 119건).** spec·follow-up 실왕복은 미실측.
-- **Phase 3**: 권한 브로커링 고도화(세밀한 정책), 평가 하네스 완성, 공개 준비
-  (README 영/한, marketplace.json, 스트리밍 데모 캡처, private 기간 산출물
-  전수 점검 후 public).
+- **Phase 1 — review axis only**: ACP transport (+subprocess fallback) +
+  context builder/redaction + reviewer agent +
+  `/kiro-bridge:setup` `/kiro-bridge:review` + failure-mode table
+  implementation. Accompanied by unit tests.
+  → **Complete + passed real-device verification (2026-09-01).** All setup
+  stages green (transport: acp, all 5 agents pass validate); bugs planted in
+  a synthetic repo (off-by-one, hardcoded key) were both caught as high
+  severity in a real 21-second review round trip.
+- **Phase 2**: `/kiro-bridge:task` (fg/bg), job lifecycle, spec pipeline,
+  remaining agents, `--follow-up`, usage metering.
+  → **Code complete (2026-09-01, 119 tests).** Real round trips for
+  spec/follow-up not yet measured.
+- **Phase 3**: mature permission brokering (fine-grained policy), complete
+  the evaluation harness, prepare for release (README EN/KR,
+  marketplace.json, streaming demo capture, full audit of private-period
+  deliverables before going public).
 
-Open Questions — 2026-09-01 실측 결과 (kiro-cli 2.20.1):
-1. ~~ACP `session/prompt` 실왕복~~ **해소**: reviewer 에이전트로 실왕복 성공.
-   스트리밍 tool_call 이벤트 수신, findings JSON 3건 파싱·래핑까지 전 구간 동작.
-2. ~~기본 신뢰 툴 집합~~ **부분 해소**: 명시 pre-trust 된 read 계열이 거부 없이
-   동작함을 확인. pre-trust 없는 에이전트의 기본값은 여전히 미확인 —
-   우리 경로는 항상 명시 신뢰이므로 실용상 영향 없음.
-3. `--mode spec` 출력 형식 — **미해소**. spec.mjs 는 에이전트 프롬프트로 형식을
-   고정 중. `/kiro-bridge:spec` 첫 실사용 시 확정.
-4. ~~tool 정식 명칭~~ **해소**: `short` 규약(`read`/`write`/`shell`)이 validate
-   통과. setup 탐침이 자동 확정 (`toolNaming: short` 캐시).
-5. ~~ACP 프레이밍~~ **해소**: ndjson 으로 실왕복 성공 (`jsonrpc.mjs` 무수정).
-6. ~~`session/update` 판별자~~ **해소**: `events.mjs` 정규화가 실제 이벤트를
-   그대로 흡수 (tool_call 제목 스트리밍 확인).
-7. ~~`--agent` 플래그 실재~~ **해소**: `acp --agent kiro-bridge-reviewer` 동작.
-   `--model`/`--effort` 는 도움말로만 확인, 실호출 미실측.
+Open Questions — 2026-09-01 measurement results (kiro-cli 2.20.1):
+1. ~~ACP `session/prompt` real round trip~~ **Resolved**: succeeded via the
+   reviewer agent. Streaming tool_call events received, findings JSON (3
+   items) parsed and wrapped end to end.
+2. ~~Default trust tool set~~ **Partially resolved**: confirmed explicitly
+   pre-trusted `read`-family tools work without denial. The default for
+   agents without pre-trust remains unconfirmed — but our path always uses
+   explicit trust, so this has no practical impact.
+3. `--mode spec` output format — **Unresolved**. spec.mjs currently pins the
+   format via the agent prompt. To be confirmed on `/kiro-bridge:spec`'s
+   first real-world use.
+4. ~~Canonical tool names~~ **Resolved**: the `short` convention
+   (`read`/`write`/`shell`) passes validate. Auto-confirmed by the setup probe
+   (`toolNaming: short` cached).
+5. ~~ACP framing~~ **Resolved**: real round trip succeeded via ndjson
+   (`jsonrpc.mjs` unmodified).
+6. ~~`session/update` discriminator~~ **Resolved**: `events.mjs`
+   normalization absorbs real events as-is (confirmed tool_call title
+   streaming).
+7. ~~`--agent` flag actually exists~~ **Resolved**: `acp --agent
+   kiro-bridge-reviewer` works. `--model`/`--effort` confirmed only from
+   help text, real-call use not yet measured.
 
-남은 실측: OQ3(spec 형식), follow-up 의 `session/load` 실왕복,
-subprocess 폴백 경로(`--output-format stream-json`) — ACP 가 항상 이기므로
-폴백은 강제로 `transport: 'subprocess'` 를 지정해야 검증 가능하다.
+Remaining measurements: OQ3 (spec format), the `session/load` real round trip
+for follow-up, the subprocess fallback path (`--output-format stream-json`) —
+since ACP always wins, verifying the fallback requires explicitly forcing
+`transport: 'subprocess'`.
 
-## 11. 테스트 전략
+## 11. Testing strategy
 
-- transport·context·findings·jobs는 가짜 kiro-cli 바이너리(mock 스크립트)로
-  유닛 테스트. Node 내장 `node:test`, 의존성 0.
-- ACP transport는 녹화된 JSON-RPC 왕복 픽스처로 재생 테스트.
-- 통합 테스트는 실제 kiro-cli 존재 시에만 도는 opt-in 계층.
-- redaction은 시크릿 샘플 픽스처로 양성/음성 모두 검증.
+- transport, context, findings, and jobs are unit-tested against a fake
+  kiro-cli binary (mock script). Uses Node's built-in `node:test`, zero
+  dependencies.
+- ACP transport is replay-tested against recorded JSON-RPC round-trip fixtures.
+- Integration tests only run as an opt-in layer, and only when a real kiro-cli is present.
+- Redaction is validated against secret-sample fixtures, both positive and negative cases.

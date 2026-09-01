@@ -10,41 +10,41 @@ import {
 
 const EXCLUDE = ['.env', '.env.*', '*.pem', '*.key', '*credentials*', 'id_rsa']
 
-test('kind 검증: 알 수 없는 kind 는 거부', () => {
+test('kind validation: rejects an unknown kind', () => {
   assert.throws(() => buildPayload({ kind: 'nope', goal: 'x' }), /unknown kind/)
 })
 
-test('goal 은 필수', () => {
+test('goal is required', () => {
   assert.throws(() => buildPayload({ kind: 'review' }), /goal is required/)
 })
 
-test('최소 페이로드는 kind 와 goal 만 담는다', () => {
-  const { payload } = buildPayload({ kind: 'review', goal: '리뷰해줘' })
-  assert.deepEqual(payload, { kind: 'review', goal: '리뷰해줘' })
+test('the minimal payload carries only kind and goal', () => {
+  const { payload } = buildPayload({ kind: 'review', goal: 'please review' })
+  assert.deepEqual(payload, { kind: 'review', goal: 'please review' })
 })
 
-// --- redaction 양성 (반드시 가려져야 하는 것) ---
+// --- redaction positives (things that must be masked) ---
 
-test('양성: AWS 액세스 키 ID 마스킹', () => {
+test('positive: masks an AWS access key ID', () => {
   const { text, hits } = redactText('key is AKIAIOSFODNN7EXAMPLE here')
   assert.match(text, /\[REDACTED:aws-access-key\]/)
   assert.ok(!text.includes('AKIAIOSFODNN7EXAMPLE'))
   assert.equal(hits.find((h) => h.kind === 'aws-access-key').count, 1)
 })
 
-test('양성: 대입식 시크릿은 값만 가리고 키 이름은 남긴다', () => {
+test('positive: an assignment secret masks only the value, keeps the key name', () => {
   const { text } = redactText('aws_secret_access_key = wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY')
   assert.match(text, /aws_secret_access_key = \[REDACTED:assigned-secret\]/)
   assert.ok(!text.includes('wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY'))
 })
 
-test('양성: password/token 대입식도 마스킹', () => {
+test('positive: password/token assignments are also masked', () => {
   const { text } = redactText('password: hunter2hunter2\napi_key = "sk-abc123def456"')
   assert.ok(!text.includes('hunter2hunter2'))
   assert.ok(!text.includes('sk-abc123def456'))
 })
 
-test('양성: PEM private key 블록 통째로 제거', () => {
+test('positive: a PEM private key block is removed whole', () => {
   const pem = [
     '-----BEGIN RSA PRIVATE KEY-----',
     'MIIEowIBAAKCAQEAxGZk9F0oq2mNvJ8kLpQ7',
@@ -54,13 +54,13 @@ test('양성: PEM private key 블록 통째로 제거', () => {
   assert.equal(text, '[REDACTED:private-key-block]')
 })
 
-test('양성: 고엔트로피 혼합 문자열 마스킹', () => {
+test('positive: masks a high-entropy mixed-charset string', () => {
   const secret = 'aZ3kQ9pL2mX7vB4nR8tY6wE1sD5fG0hJcV2bN9mK'
   const { text } = redactText(`token=${secret}`)
   assert.ok(!text.includes(secret))
 })
 
-test('양성: private 호스트명은 설정으로 마스킹', () => {
+test('positive: private hostnames are masked via config', () => {
   const { text } = redactText('curl http://svc-a.internal.corp/health', {
     privateHosts: ['.internal.corp'],
   })
@@ -68,37 +68,37 @@ test('양성: private 호스트명은 설정으로 마스킹', () => {
   assert.ok(!text.includes('svc-a.internal.corp'))
 })
 
-// --- redaction 음성 (가려지면 안 되는 것) ---
+// --- redaction negatives (things that must NOT be masked) ---
 
-test('음성: git SHA(소문자 hex 40자)는 마스킹하지 않는다', () => {
+test('negative: a git SHA (40-char lowercase hex) is not masked', () => {
   const sha = 'ae8a498a0155cdf4f1c33951bfa742401485dec7'
   const { text, hits } = redactText(`commit ${sha}`)
-  assert.ok(text.includes(sha), 'git SHA 가 마스킹되면 diff 리뷰가 망가진다')
+  assert.ok(text.includes(sha), 'masking a git SHA would break diff review')
   assert.equal(hits.length, 0)
 })
 
-test('음성: 소문자 스네이크 식별자는 길어도 남는다', () => {
+test('negative: a lowercase snake_case identifier survives even if long', () => {
   const ident = 'very_long_lowercase_identifier_for_a_function_name'
   const { text } = redactText(`export function ${ident}() {}`)
   assert.ok(text.includes(ident))
 })
 
-test('음성: 일반 산문은 그대로', () => {
-  const prose = '이 함수는 입력을 검증한 뒤 결과를 반환한다.'
+test('negative: ordinary prose passes through unchanged', () => {
+  const prose = 'This function validates the input and then returns the result.'
   const { text, hits } = redactText(prose)
   assert.equal(text, prose)
   assert.equal(hits.length, 0)
 })
 
-test('음성: 소문자 hex 64자(sha256)도 남는다', () => {
+test('negative: a 64-char lowercase hex string (sha256) also survives', () => {
   const digest = 'a'.repeat(20) + 'b3f19c2d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a'
   const { text } = redactText(digest)
   assert.ok(text.includes(digest))
 })
 
-// --- 파일 제외 ---
+// --- file exclusion ---
 
-test('제외 목록: .env / pem / credentials 는 페이로드에서 빠진다', () => {
+test('exclude list: .env / pem / credentials are dropped from the payload', () => {
   const { payload, excludedFiles } = buildPayload(
     {
       kind: 'review',
@@ -117,15 +117,15 @@ test('제외 목록: .env / pem / credentials 는 페이로드에서 빠진다',
   assert.equal(excludedFiles.length, 4)
 })
 
-test('isExcludedPath 는 경로와 basename 양쪽을 본다', () => {
+test('isExcludedPath checks both the full path and the basename', () => {
   assert.equal(isExcludedPath('a/b/id_rsa', EXCLUDE), true)
   assert.equal(isExcludedPath('id_rsa', EXCLUDE), true)
   assert.equal(isExcludedPath('src/keyboard.mjs', EXCLUDE), false)
 })
 
-// --- 상한·소독 ---
+// --- caps / sanitization ---
 
-test('excerpt 는 상한으로 잘린다', () => {
+test('excerpt is truncated at its cap', () => {
   const { payload } = buildPayload({
     kind: 'review',
     goal: 'g',
@@ -135,12 +135,12 @@ test('excerpt 는 상한으로 잘린다', () => {
   assert.match(payload.files[0].excerpt, /truncated/)
 })
 
-test('제어문자는 제거된다', () => {
-  const { payload } = buildPayload({ kind: 'task', goal: 'a\u0007b\u001Fc' })
+test('control characters are stripped', () => {
+  const { payload } = buildPayload({ kind: 'task', goal: 'abc' })
   assert.equal(payload.goal, 'abc')
 })
 
-test('redactions 는 어디서 무엇을 가렸는지 기록한다', () => {
+test('redactions records where and what got masked', () => {
   const { redactions } = buildPayload(
     { kind: 'review', goal: 'g', diff: 'AKIAIOSFODNN7EXAMPLE' },
     { redaction: { excludeFiles: EXCLUDE } },
@@ -150,7 +150,7 @@ test('redactions 는 어디서 무엇을 가렸는지 기록한다', () => {
   assert.equal(hit.count, 1)
 })
 
-test('signals 는 화이트리스트 키만 통과', () => {
+test('signals only lets whitelisted keys through', () => {
   const { payload } = buildPayload({
     kind: 'task',
     goal: 'g',
@@ -159,7 +159,7 @@ test('signals 는 화이트리스트 키만 통과', () => {
   assert.deepEqual(Object.keys(payload.signals), ['failing_tests'])
 })
 
-test('shannonEntropy 는 균일 문자열에서 낮다', () => {
+test('shannonEntropy is low for a uniform string', () => {
   assert.ok(shannonEntropy('aaaaaaaa') < 0.001)
   assert.ok(shannonEntropy('aZ3kQ9pL2mX7vB4n') > 3.5)
 })

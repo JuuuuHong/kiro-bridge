@@ -1,8 +1,8 @@
-// /kiro:task 플로우 + 잡 커맨드(result/status/cancel).
+// /kiro:task flow + job commands (result/status/cancel).
 //
-// fg 는 review 와 같은 조립이고, bg 는 잡을 만들어 자기 자신(bridge.mjs)의
-// _worker 커맨드를 detached 로 띄운 뒤 잡 id 만 돌려준다. 워커가 죽어도
-// 상태 파일이 남으므로 result/status 로 항상 추적할 수 있다.
+// fg is the same assembly as review; bg creates a job, spawns its own
+// (bridge.mjs) _worker command detached, and returns only the job id. Even if
+// the worker dies, the state file remains, so result/status can always track it.
 import { spawn } from 'node:child_process'
 import { openSync, closeSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -17,13 +17,13 @@ import { bridgeError, BridgeError, CODES } from './errors.mjs'
 import * as jobs from './jobs.mjs'
 import { recordUsage, readUsage, formatUsage } from './usage.mjs'
 
-export const DEFAULT_TIMEOUT_MS = 600_000 // 설계 §8 실패 모드 표 (task 600s)
+export const DEFAULT_TIMEOUT_MS = 600_000 // design §8 failure mode table (task 600s)
 
 const TASK_CONSTRAINTS = [
-  '읽어서 확인하지 못한 내용은 주장하지 말 것.',
+  'Do not claim anything you could not confirm by reading it.',
 ]
 
-// --write 는 전권이 아니라 쓰기 허용 scoped 에이전트 사용을 뜻한다 (ADR-002 결정 4).
+// --write does not mean full access — it means using a write-permitted scoped agent (ADR-002 decision 4).
 export function pickAgent({ write = false } = {}) {
   return write ? AGENT_DEFS.worker : AGENT_DEFS.researcher
 }
@@ -35,7 +35,7 @@ function buildTaskPayload({ goal, constraints = [], config }) {
   )
 }
 
-// fg 실행 공통 경로. spec.mjs 도 이 함수를 쓴다.
+// Common fg execution path. spec.mjs also uses this function.
 export async function runDelegated({
   kind = 'task',
   goal,
@@ -116,7 +116,7 @@ export async function task(options = {}) {
     ...rest
   } = options
   if (!goal || !goal.trim()) {
-    throw bridgeError(CODES.PROTOCOL, { reason: 'task 목표가 비어 있습니다' })
+    throw bridgeError(CODES.PROTOCOL, { reason: 'task goal is empty' })
   }
 
   const agentDef = pickAgent({ write })
@@ -137,8 +137,8 @@ function bridgePath() {
   return join(dirname(dirname(fileURLToPath(import.meta.url))), 'bridge.mjs')
 }
 
-// bg: 잡 생성 → 자기 자신을 detached 로 재실행. stdio 는 잡 디렉토리의
-// 로그 파일로 리다이렉트한다 — 부모(슬래시 커맨드)는 즉시 반환된다.
+// bg: create job -> re-exec itself detached. stdio is redirected to the log
+// files in the job directory — the parent (slash command) returns immediately.
 export function spawnBackground({ goal, write, cwd, timeoutMs, model, effort, spawnFn = spawn }) {
   const { jobId, dir } = jobs.createJob({
     cwd,
@@ -165,7 +165,7 @@ export function spawnBackground({ goal, write, cwd, timeoutMs, model, effort, sp
   return { background: true, jobId, dir }
 }
 
-// detached 워커 본체. 상태 전이와 결과 기록이 전부 여기서 일어난다.
+// The detached worker body. All state transitions and result recording happen here.
 export async function runWorker(jobId, { cwd = process.cwd(), runFn } = {}) {
   const job = jobs.readJob(jobId, cwd)
   if (!job) throw new Error(`unknown job: ${jobId}`)
@@ -197,16 +197,16 @@ export async function runWorker(jobId, { cwd = process.cwd(), runFn } = {}) {
   }
 }
 
-// /kiro:result — 결과 회수. --follow-up 은 저장된 sessionId 로 세션을 이어간다.
+// /kiro:result — retrieve results. --follow-up continues the session using the saved sessionId.
 export async function result(options = {}) {
   const { jobId: requested, cwd = process.cwd(), followUp, runFn = transport.run, ...rest } = options
   jobs.reapOrphans(cwd)
 
   const jobId = requested || jobs.latestJobId(cwd)
-  if (!jobId) return { empty: true, message: '이 저장소에 잡이 없습니다.' }
+  if (!jobId) return { empty: true, message: 'No jobs in this repository.' }
 
   const job = jobs.readJob(jobId, cwd)
-  if (!job) return { empty: true, message: `잡을 찾을 수 없습니다: ${jobId}` }
+  if (!job) return { empty: true, message: `Job not found: ${jobId}` }
 
   const body = jobs.readResult(jobId, cwd)
 
@@ -214,10 +214,10 @@ export async function result(options = {}) {
     return { jobId, status: job.status, meta: job.meta, body }
   }
 
-  // follow-up 은 ACP 세션 재사용이 전제다 (설계 §8). 원샷 경로에는 세션이 없다.
+  // follow-up assumes ACP session reuse (design §8). The one-shot path has no session.
   if (!job.meta.sessionId) {
     throw bridgeError(CODES.PROTOCOL, {
-      reason: `잡 ${jobId} 에 재사용할 세션이 없습니다 (transport: ${job.meta.transport || 'unknown'})`,
+      reason: `job ${jobId} has no session to reuse (transport: ${job.meta.transport || 'unknown'})`,
     })
   }
 
@@ -253,18 +253,18 @@ export function status({ cwd = process.cwd(), config = loadConfig() } = {}) {
 }
 
 export function cancel({ jobId, cwd = process.cwd() } = {}) {
-  if (!jobId) return { ok: false, reason: 'job id 가 필요합니다. /kiro-bridge:status 로 확인하세요.' }
+  if (!jobId) return { ok: false, reason: 'job id is required. Check with /kiro-bridge:status.' }
   return jobs.cancelJob(jobId, { cwd })
 }
 
-// --- 사람이 읽는 요약 ---
+// --- human-readable summaries ---
 
 export function formatTask(result) {
   if (result.background) {
     return [
-      `백그라운드 잡 시작: ${result.jobId}`,
-      `결과 회수: /kiro-bridge:result ${result.jobId}`,
-      `상태 확인: /kiro-bridge:status`,
+      `Background job started: ${result.jobId}`,
+      `Retrieve result: /kiro-bridge:result ${result.jobId}`,
+      `Check status: /kiro-bridge:status`,
     ].join('\n')
   }
   if (result.dryRun) {
@@ -275,10 +275,10 @@ export function formatTask(result) {
 
 export function formatResult(res) {
   if (res.empty) return res.message
-  const lines = [`잡 ${res.jobId}: ${res.status}`]
-  if (res.meta.error) lines.push(`오류: ${res.meta.error}`)
+  const lines = [`Job ${res.jobId}: ${res.status}`]
+  if (res.meta.error) lines.push(`Error: ${res.meta.error}`)
   if (res.body) lines.push('', res.body)
-  else if (res.status === 'running' || res.status === 'queued') lines.push('아직 결과가 없습니다.')
+  else if (res.status === 'running' || res.status === 'queued') lines.push('No result yet.')
   if (res.followUp) lines.push('', `--- follow-up: ${res.followUp.question} ---`, res.followUp.wrapped)
   return lines.join('\n')
 }
@@ -286,19 +286,19 @@ export function formatResult(res) {
 export function formatStatus(res) {
   const lines = []
   if (res.jobs.length === 0) {
-    lines.push('이 저장소에 잡이 없습니다.')
+    lines.push('No jobs in this repository.')
   } else {
-    lines.push('잡 목록 (이 저장소):')
+    lines.push('Jobs (this repository):')
     for (const job of res.jobs) {
-      const done = job.meta.finishedAt ? ` (종료 ${job.meta.finishedAt})` : ''
+      const done = job.meta.finishedAt ? ` (finished ${job.meta.finishedAt})` : ''
       lines.push(`  ${job.jobId}  ${job.status}${done}`)
     }
   }
-  if (res.gcRemoved.length > 0) lines.push(`GC: ${res.gcRemoved.length}개 잡 정리됨`)
-  lines.push('', '사용량:', formatUsage(res.usage))
+  if (res.gcRemoved.length > 0) lines.push(`GC: ${res.gcRemoved.length} job(s) cleaned up`)
+  lines.push('', 'Usage:', formatUsage(res.usage))
   return lines.join('\n')
 }
 
 export function formatCancel(res) {
-  return res.ok ? `취소됨: ${res.jobId}` : `취소 실패: ${res.reason}`
+  return res.ok ? `Cancelled: ${res.jobId}` : `Cancel failed: ${res.reason}`
 }

@@ -1,43 +1,48 @@
-# ADR-003: 구조화 컨텍스트 핸드오프 + best-effort 응답 계약
+# ADR-003: Structured context handoff + best-effort response contract
 
-- 상태: 채택 (2026-08-31)
+- Status: Adopted (2026-08-31)
 
-## 맥락
+## Context
 
-위임의 가장 단순한 형태는 자연어 프롬프트 문자열 하나를 넘기는 것이다.
-그 결과:
+The simplest form of delegation is handing over a single natural-language
+prompt string. The result of that:
 
-- Kiro가 무엇을 보고 판단했는지(diff 전부? 일부?) 재현 불가.
-- 응답이 산문이라 Claude가 findings를 다시 파싱·해석해야 하고, 반영
-  여부 판단이 비결정적이다.
+- No way to reproduce what Kiro actually saw and judged from (the whole diff? part of it?).
+- The response is prose, so Claude has to re-parse and interpret findings,
+  and the decision of whether to apply them is non-deterministic.
 
-위임 품질은 모델 성능보다 **넘기는 컨텍스트의 질**이 좌우한다는 것이
-실사용 가설이다.
+The hypothesis under real-world use is that delegation quality is governed
+more by **the quality of the context handed over** than by model performance.
 
-## 결정
+## Decision
 
-1. 요청: `context.mjs`가 kind(review/task/spec)별로 diff·관련 파일
-   발췌·실패 테스트 출력·제약을 JSON 블록으로 조립해 프롬프트 상단에
-   삽입한다. 무엇이 포함됐는지가 코드로 결정되고 로그로 남는다.
-2. 응답: 커스텀 에이전트 프롬프트로 findings JSON 스키마(severity/file/
-   line/claim/evidence/suggestion)를 요구한다.
-3. **best-effort 원칙**: 응답 파싱 실패는 오류가 아니다. 원문을 그대로
-   반환하고 구조화 실패를 표시만 한다. LLM 출력에 스키마를 강제하는
-   검증 게이트를 만들지 않는다 (게이트는 재시도 루프·크레딧 소모로 이어짐).
-4. 페이로드는 크기와 무관하게 **항상 stdin 파이프**로 전달한다 — 인자
-   크기 임계값 분기를 없애 테스트 경로를 절반으로 줄인다 (piped-stdin은
-   kiro-cli 공식 지원 경로).
-5. Kiro는 `read`/`grep` 툴로 스스로 파일을 읽을 수 있으므로 `files.excerpt`
-   는 전체 삽입이 아니라 진입점 안내 수준으로 최소화한다. ACP
-   `_kiro.dev/metadata`의 `contextUsagePercentage`로 과대 삽입을 경고한다.
+1. Request: `context.mjs` assembles a JSON block per kind (review/task/spec)
+   — diff, relevant file excerpts, failing-test output, constraints — and
+   inserts it at the top of the prompt. What's included is determined by
+   code and left in the logs.
+2. Response: the custom agent prompt requires a findings JSON schema
+   (severity/file/line/claim/evidence/suggestion).
+3. **Best-effort principle**: a response parse failure is not an error. The
+   raw text is returned as-is and only a structuring-failure flag is set. No
+   validation gate is built to force a schema onto LLM output (a gate leads
+   to retry loops and wasted credits).
+4. The payload is **always delivered via stdin pipe**, regardless of size —
+   eliminating an argument-size threshold branch, which cuts the test
+   surface roughly in half (piped stdin is an officially supported kiro-cli path).
+5. Since Kiro can read files itself via the `read`/`grep` tools,
+   `files.excerpt` is kept to entry-point-level guidance rather than full
+   inclusion. The `contextUsagePercentage` from ACP's `_kiro.dev/metadata`
+   is used to warn against over-stuffing the payload.
 
-## 결과
+## Consequences
 
-- 리뷰 결과가 기계 판독 가능 → findings 반영 플로우(사용자 승인 필수,
-  ADR-004)의 기반.
-- 재현성: 같은 입력 → 같은 **페이로드** (응답은 여전히 비결정적이다).
-  실패를 재현하고 회귀 테스트할 수 있다는 뜻이지, 위임 전체가 결정적이
-  된다는 뜻이 아니다.
-- "컨텍스트의 질이 위임 품질을 좌우한다"는 가설이므로 평가 하네스로
-  검증한다 (설계 §9). 반증되면 이 ADR을 개정한다.
-- 비용: context 빌더 유지보수. 핵심 차별화 지점이므로 투자 가치 있음.
+- Review results become machine-readable → the foundation for a
+  findings-application flow (user approval always required, ADR-004).
+- Reproducibility: same input → same **payload** (the response is still
+  non-deterministic). This means failures can be reproduced and
+  regression-tested, not that the whole delegation becomes deterministic.
+- "Context quality governs delegation quality" is a hypothesis, so it is
+  validated with an evaluation harness (Design §9). If disproved, this ADR
+  will be revised.
+- Cost: ongoing maintenance of the context builder. This is the core
+  differentiation point, so the investment is worthwhile.

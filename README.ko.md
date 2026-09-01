@@ -1,0 +1,94 @@
+# kiro-bridge
+
+[English](README.md) | [한국어](README.ko.md)
+
+![license](https://img.shields.io/badge/license-MIT-blue.svg)
+
+Claude Code에서 리뷰·조사·spec 작성을 ACP를 통해 Kiro CLI에 위임한다.
+
+## 왜 필요한가
+
+Claude Code에서 Kiro CLI를 부르는 가장 단순한 경로는 원샷 서브프로세스
+호출이다 — 프롬프트 문자열을 넘기고 문자열을 돌려받는다. kiro-bridge는
+그 경로가 성립하지 않는 두 축을 채우기 위해 존재한다.
+
+**ACP 네이티브 통합.** kiro-cli는 `kiro-cli acp` 서브커맨드로 Agent Client
+Protocol을 정식 제공한다. 원샷 호출 대신 이를 1차 transport로 쓰면
+스트리밍 진행 상황(`session/update` — Kiro의 툴 호출이 실시간으로 보임),
+취소(`session/cancel`), 세션 재사용(`session/load` — 후속 질문에 컨텍스트
+재전송 불필요), 권한 브로커링(`session/request_permission`을 Claude Code
+쪽 판단으로 중재하는, 정적 신뢰 목록을 넘어서는 대화형 모델)이 열린다.
+이 넷은 요청-응답 한 번으로는 구조적으로 성립하지 않는다.
+
+**신뢰 경계 래핑을 갖춘 구조화 컨텍스트 핸드오프.** 프롬프트 문자열
+대신, kiro-bridge는 diff·관련 파일 발췌·실패한 테스트 출력·제약 조건을
+구조화 페이로드로 넘기고, severity가 붙은 findings JSON을 돌려받는다.
+페이로드가 결정적이므로 실패를 재현하고 회귀 테스트할 수 있다. 그리고
+Kiro의 출력이 Claude Code 컨텍스트로 되돌아오므로, 명령이 아니라
+데이터로 래핑한다 — 자동 반영 없음, 고정 신뢰 경계 래핑, 파싱 성공
+여부와 무관하게 모든 응답에 적용되는 스키마 소독.
+
+kiro-bridge는 Kiro 자체의 툴 신뢰 모델, 커스텀 에이전트, spec/planner
+모드를 재발명하지 않는다 — Claude Code 세션과 Kiro의 기능 사이의
+접속면이다.
+
+## 요구사항
+
+- Claude Code
+- kiro-cli 2.20+
+- Node 20+
+- `kiro-cli login`으로 인증된 세션
+
+## 설치
+
+```
+/plugin marketplace add JuuuuHong/kiro-bridge
+/plugin install kiro-bridge@kiro-bridge
+```
+
+## 커맨드
+
+| 커맨드 | Phase | 설명 |
+|---|---|---|
+| `/kiro-bridge:setup` | 1 | 설치·인증 확인 후 번들 Kiro 에이전트 설치 |
+| `/kiro-bridge:review [ref]` | 1 | 현재 diff를 Kiro가 리뷰하고 구조화 findings 반환 |
+| `/kiro-bridge:task <목표> [--bg] [--write]` | 2 | 조사·디버깅을 Kiro에 위임 (foreground 또는 background) |
+| `/kiro-bridge:spec <기능>` | 2 | Kiro 네이티브 spec 모드로 `.kiro/specs/`에 requirements/design 생성 |
+| `/kiro-bridge:result [job-id] [--follow-up]` | 2 | 백그라운드 잡 결과 회수, 세션 이어서 후속 질문 가능 |
+| `/kiro-bridge:status` | 2 | 이 저장소의 잡 목록과 누적 사용량 표시 |
+| `/kiro-bridge:cancel <job-id>` | 2 | 실행 중인 백그라운드 잡 취소 |
+
+## 보안 모델
+
+- **기본 읽기 전용.** 위임 실행은 읽기 계열 툴을 명시적으로 pre-trust하고
+  쓰기·실행 계열 툴은 미신뢰로 둔다. 커스텀 에이전트 JSON이 권한 명세의
+  단일 진실 공급원이다 (ADR-002).
+- **명시 pre-trust + denial detector.** non-interactive 모드는 미신뢰 툴
+  호출을 묻지 않고 자동 거부한 채 대화를 계속한다 — 안전이 아니라 조용한
+  기능 고장이다. denial detector가 감지된 거부를 그럴듯한 결과로 흘려
+  보내지 않고 "권한 부족" 오류로 승격한다 (ADR-002).
+- **셸은 어떤 에이전트·어떤 플래그에서도 절대 신뢰하지 않는다.**
+- **전권으로 가는 기본 경로는 없다.** `--trust-all-tools`가 기본값이 되는
+  코드 경로는 만들지 않는다. 전권은 명시적 `--yolo` 플래그 + 실행 전
+  확인으로만 열린다 (ADR-002).
+- **아웃바운드 redaction.** diff·파일 발췌는 기기를 떠나기 전에 걸러진다
+  — 파일 제외 목록, 시크릿 패턴 마스킹, `--dry-run` 페이로드 미리보기,
+  제한된 권한의 페이로드 로그 (설계 §7).
+- **Kiro 출력은 데이터로 취급하며 명령으로 취급하지 않는다.** findings는
+  항상 고정 신뢰 경계로 래핑되고 스키마로 소독되며, 반영 전 diff
+  미리보기와 사용자 명시 승인을 반드시 거친다 — 자동 반영 플로우는
+  존재하지 않는다 (ADR-004).
+
+## 설계 문서
+
+아키텍처, 결정 기록, 평가 계획은 [`docs/`](docs/) 하위에 있다 —
+[`docs/designs/2026-08-31-kiro-bridge-design.md`](docs/designs/2026-08-31-kiro-bridge-design.md)와
+[`docs/decisions/`](docs/decisions/) 하위 ADR부터 보면 된다.
+
+## 검증 환경
+
+kiro-cli 2.20.1, macOS, 2026-09-01.
+
+## 라이선스
+
+[MIT](LICENSE)

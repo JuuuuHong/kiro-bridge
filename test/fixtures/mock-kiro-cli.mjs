@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// 가짜 kiro-cli. 실제 바이너리 없이 transport 를 검증하기 위한 것 (설계 §11).
+// Fake kiro-cli. Used to verify the transport without a real binary (design §11).
 //
-// 시나리오는 환경변수 MOCK_SCENARIO 로 고른다. 실제 kiro-cli 를 실측한 뒤에는
-// 여기 응답을 녹화 픽스처로 교체하면 되고, transport 코드는 그대로 둔다.
+// The scenario is chosen via the MOCK_SCENARIO env var. Once real kiro-cli
+// has been measured, the responses here can be swapped for recorded fixtures, leaving the transport code untouched.
 import { createInterface } from 'node:readline'
 
 const scenario = process.env.MOCK_SCENARIO || 'ok'
@@ -15,7 +15,7 @@ if (process.argv.includes('--version')) {
   process.exit(0)
 }
 
-// --- ACP 모드 -------------------------------------------------------------
+// --- ACP mode -------------------------------------------------------------
 if (mode === 'acp') {
   if (scenario === 'acp-unavailable') {
     process.stderr.write('unknown subcommand: acp\n')
@@ -60,7 +60,7 @@ if (mode === 'acp') {
         process.exit(1)
       }
 
-      update(sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: '생각 중' } })
+      update(sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'thinking' } })
       update(sessionId, { sessionUpdate: 'tool_call', toolCallId: 'tc1', title: 'read src/app.mjs', status: 'pending' })
 
       if (scenario === 'denied') {
@@ -72,13 +72,13 @@ if (mode === 'acp') {
         })
         update(sessionId, {
           sessionUpdate: 'agent_message_chunk',
-          content: { type: 'text', text: '{"findings":[{"severity":"high","claim":"확인 못 했지만 그럴듯한 주장"}],"summary":"s"}' },
+          content: { type: 'text', text: '{"findings":[{"severity":"high","claim":"plausible-sounding claim that was never verified"}],"summary":"s"}' },
         })
         return send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } })
       }
 
       if (scenario === 'permission') {
-        // 역방향 요청: 클라이언트가 응답하지 않으면 여기서 멈춘다.
+        // Reverse request: hangs here if the client doesn't respond.
         pendingPromptId = msg.id
         send({
           jsonrpc: '2.0',
@@ -90,23 +90,23 @@ if (mode === 'acp') {
       }
 
       if (scenario === 'timeout') {
-        return // 응답하지 않고 매달린다
+        return // never respond, hangs
       }
 
       update(sessionId, { sessionUpdate: 'tool_call_update', toolCallId: 'tc1', status: 'completed', content: { type: 'text', text: 'ok' } })
       update(sessionId, {
         sessionUpdate: 'agent_message_chunk',
-        content: { type: 'text', text: '{"findings":[{"severity":"medium","file":"src/app.mjs","line":10,"claim":"널 체크 누락","evidence":"e","suggestion":"s"}],"summary":"1건"}' },
+        content: { type: 'text', text: '{"findings":[{"severity":"medium","file":"src/app.mjs","line":10,"claim":"missing null check","evidence":"e","suggestion":"s"}],"summary":"1 finding"}' },
       })
       return send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } })
     }
 
-    // 역방향 요청에 대한 클라이언트 응답 → 보류 중이던 prompt 를 마무리한다
+    // Client response to the reverse request -> finalizes the pending prompt
     if (msg.id === 9001 && msg.result !== undefined && pendingPromptId != null) {
       const allowed = msg.result?.outcome === 'selected'
       update(sessionId, {
         sessionUpdate: 'agent_message_chunk',
-        content: { type: 'text', text: allowed ? '{"findings":[],"summary":"허가됨"}' : '{"findings":[],"summary":"거부됨"}' },
+        content: { type: 'text', text: allowed ? '{"findings":[],"summary":"granted"}' : '{"findings":[],"summary":"denied"}' },
       })
       send({ jsonrpc: '2.0', id: pendingPromptId, result: { stopReason: 'end_turn' } })
       pendingPromptId = null
@@ -116,7 +116,7 @@ if (mode === 'acp') {
   process.stdin.on('end', () => process.exit(0))
 }
 
-// --- subprocess(stream-json) 모드 ----------------------------------------
+// --- subprocess (stream-json) mode ----------------------------------------
 else if (mode === 'chat') {
   let input = ''
   process.stdin.on('data', (c) => { input += c })
@@ -145,7 +145,7 @@ else if (mode === 'chat') {
       })
     }
 
-    // 입력을 그대로 받았는지 확인할 수 있게 goal 을 되돌려준다
+    // Echo the goal back so we can confirm the input arrived intact
     let goal = ''
     try { goal = JSON.parse(input).goal || '' } catch {}
     send({
