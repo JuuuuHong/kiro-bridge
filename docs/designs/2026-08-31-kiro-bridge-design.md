@@ -221,31 +221,35 @@ precision/recall + 크레딧 + 지연을 `docs/evaluation/`에 재현 스크립�
 - **Phase 1 — 리뷰 단일 축**: ACP transport(+subprocess 폴백) + 컨텍스트
   빌더/redaction + reviewer 에이전트 + `/kiro-bridge:setup` `/kiro-bridge:review` +
   실패 모드 표 구현. 유닛 테스트 동반.
-  → **코드 완료 (2026-09-01), 실기기 검증 대기.** 목업 바이너리 기준 테스트
-  91건 통과. 실제 `kiro-cli` 로 1회 왕복해야 Phase 1 을 닫을 수 있다
-  (OQ 1·2·3·5·6·7). OQ4 는 설치 시점 탐침으로 코드가 스스로 해소한다.
+  → **완료 + 실기기 검증 통과 (2026-09-01).** setup 전 단계 green
+  (transport: acp, 에이전트 5종 validate 통과), 합성 저장소에 심은 버그
+  (off-by-one·하드코딩 키)를 review 실왕복 21초 만에 high 2건으로 전부 검출.
 - **Phase 2**: `/kiro-bridge:task`(fg/bg), 잡 수명주기, spec 파이프라인,
-  나머지 에이전트 3종, `--follow-up`, usage 계측.
+  나머지 에이전트, `--follow-up`, usage 계측.
+  → **코드 완료 (2026-09-01, 테스트 119건).** spec·follow-up 실왕복은 미실측.
 - **Phase 3**: 권한 브로커링 고도화(세밀한 정책), 평가 하네스 완성, 공개 준비
   (README 영/한, marketplace.json, 스트리밍 데모 캡처, private 기간 산출물
   전수 점검 후 public).
 
-Open Questions (각 1회 실측으로 해소):
-1. ACP `session/prompt` 실왕복 (핸드셰이크까지만 검증됨, 크레딧 소모 이슈로 보류).
-2. 기본 신뢰 툴 집합 — `read`가 기본 신뢰인지 (`autoAllowReadonly` 기본값).
-3. `--mode spec` 출력이 `.kiro/specs/` 파일인지 대화 텍스트인지.
-4. tool 정식 명칭 (`fs_read` vs `read`) — §6 참조.
-5. ACP 프레이밍이 ndjson인지 (LSP식 `Content-Length` 헤더가 아닌지).
-   `jsonrpc.mjs` 한 곳에 격리되어 있어 반증되면 그 파일만 바뀐다.
-6. `session/update` 판별자 이름 (`agent_message_chunk` 등) 및
-   `--output-format stream-json` 줄 형식이 ACP 이벤트와 동일한지.
-   `events.mjs` 의 정규화가 양쪽을 흡수하도록 되어 있다.
-7. `chat`/`acp` 서브커맨드의 `--agent`/`--model`/`--effort` 플래그 실재 여부.
+Open Questions — 2026-09-01 실측 결과 (kiro-cli 2.20.1):
+1. ~~ACP `session/prompt` 실왕복~~ **해소**: reviewer 에이전트로 실왕복 성공.
+   스트리밍 tool_call 이벤트 수신, findings JSON 3건 파싱·래핑까지 전 구간 동작.
+2. ~~기본 신뢰 툴 집합~~ **부분 해소**: 명시 pre-trust 된 read 계열이 거부 없이
+   동작함을 확인. pre-trust 없는 에이전트의 기본값은 여전히 미확인 —
+   우리 경로는 항상 명시 신뢰이므로 실용상 영향 없음.
+3. `--mode spec` 출력 형식 — **미해소**. spec.mjs 는 에이전트 프롬프트로 형식을
+   고정 중. `/kiro-bridge:spec` 첫 실사용 시 확정.
+4. ~~tool 정식 명칭~~ **해소**: `short` 규약(`read`/`write`/`shell`)이 validate
+   통과. setup 탐침이 자동 확정 (`toolNaming: short` 캐시).
+5. ~~ACP 프레이밍~~ **해소**: ndjson 으로 실왕복 성공 (`jsonrpc.mjs` 무수정).
+6. ~~`session/update` 판별자~~ **해소**: `events.mjs` 정규화가 실제 이벤트를
+   그대로 흡수 (tool_call 제목 스트리밍 확인).
+7. ~~`--agent` 플래그 실재~~ **해소**: `acp --agent kiro-bridge-reviewer` 동작.
+   `--model`/`--effort` 는 도움말로만 확인, 실호출 미실측.
 
-**착수 순서 변경 (2026-09-01)**: 원래 1~4를 Phase 1 착수 전 조건으로 뒀으나,
-실측 환경이 없는 동안 §11의 목업 기반 계층(컨텍스트·findings·transport)을
-먼저 구현했다. 실측이 가능해지면 목업 응답을 녹화 픽스처로 교체하고 위
-항목들을 확정한다 — transport 코드 자체는 바뀌지 않는 것이 설계 의도다.
+남은 실측: OQ3(spec 형식), follow-up 의 `session/load` 실왕복,
+subprocess 폴백 경로(`--output-format stream-json`) — ACP 가 항상 이기므로
+폴백은 강제로 `transport: 'subprocess'` 를 지정해야 검증 가능하다.
 
 ## 11. 테스트 전략
 
