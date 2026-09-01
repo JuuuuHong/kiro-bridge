@@ -2,15 +2,25 @@
 // 엔트리포인트. 커맨드 라우팅만 하고 로직은 lib/ 에 둔다 (설계 §3).
 import { review, formatSummary } from './lib/review.mjs'
 import { setup, formatSetup } from './lib/setup.mjs'
+import {
+  task, runWorker, result, status, cancel,
+  formatTask, formatResult, formatStatus, formatCancel,
+} from './lib/task.mjs'
+import { spec, formatSpec } from './lib/spec.mjs'
 import { EVENT_TYPES } from './lib/transport/events.mjs'
 import { BridgeError } from './lib/errors.mjs'
 
 const USAGE = `kiro-bridge
 
   bridge.mjs setup  [--force]
-  bridge.mjs review [ref] [--dry-run] [--timeout <ms>] [--quiet]
+  bridge.mjs review [ref]    [--dry-run] [--timeout <ms>] [--quiet]
+  bridge.mjs task   <목표>   [--bg] [--write] [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
+  bridge.mjs spec   <목표>   [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
+  bridge.mjs result [job-id] [--follow-up <질문>]
+  bridge.mjs status
+  bridge.mjs cancel <job-id>
 
-review 는 findings 를 자동 반영하지 않는다 — 출력은 검토용 데이터다 (ADR-004).
+review/task/spec 은 결과를 자동 반영하지 않는다 — 출력은 검토용 데이터다 (ADR-004).
 `
 
 export function parseArgs(argv) {
@@ -21,7 +31,12 @@ export function parseArgs(argv) {
     if (arg === '--dry-run') flags.dryRun = true
     else if (arg === '--force') flags.force = true
     else if (arg === '--quiet') flags.quiet = true
+    else if (arg === '--bg') flags.background = true
+    else if (arg === '--write') flags.write = true
     else if (arg === '--timeout') { flags.timeoutMs = Number(rest[i + 1]); i += 1 }
+    else if (arg === '--model') { flags.model = rest[i + 1]; i += 1 }
+    else if (arg === '--effort') { flags.effort = rest[i + 1]; i += 1 }
+    else if (arg === '--follow-up') { flags.followUp = rest[i + 1]; i += 1 }
     else if (arg.startsWith('--')) throw new Error(`unknown flag: ${arg}`)
     else flags._.push(arg)
   }
@@ -56,13 +71,69 @@ async function main(argv) {
   }
 
   if (command === 'review') {
-    const result = await review({
+    const res = await review({
       ref: flags._[0] || null,
       dryRun: flags.dryRun,
       timeoutMs: flags.timeoutMs,
       onEvent: makeReporter(flags.quiet),
     })
-    process.stdout.write(`${formatSummary(result)}\n`)
+    process.stdout.write(`${formatSummary(res)}\n`)
+    return 0
+  }
+
+  if (command === 'task') {
+    const res = await task({
+      goal: flags._.join(' '),
+      write: flags.write,
+      background: flags.background,
+      dryRun: flags.dryRun,
+      timeoutMs: flags.timeoutMs,
+      model: flags.model,
+      effort: flags.effort,
+      onEvent: makeReporter(flags.quiet),
+    })
+    process.stdout.write(`${formatTask(res)}\n`)
+    return 0
+  }
+
+  if (command === 'spec') {
+    const res = await spec({
+      goal: flags._.join(' '),
+      dryRun: flags.dryRun,
+      timeoutMs: flags.timeoutMs,
+      model: flags.model,
+      effort: flags.effort,
+      onEvent: makeReporter(flags.quiet),
+    })
+    process.stdout.write(`${formatSpec(res)}\n`)
+    return 0
+  }
+
+  if (command === 'result') {
+    const res = await result({
+      jobId: flags._[0] || null,
+      followUp: flags.followUp,
+      timeoutMs: flags.timeoutMs,
+      onEvent: makeReporter(flags.quiet),
+    })
+    process.stdout.write(`${formatResult(res)}\n`)
+    return 0
+  }
+
+  if (command === 'status') {
+    process.stdout.write(`${formatStatus(status())}\n`)
+    return 0
+  }
+
+  if (command === 'cancel') {
+    const res = cancel({ jobId: flags._[0] })
+    process.stdout.write(`${formatCancel(res)}\n`)
+    return res.ok ? 0 : 1
+  }
+
+  // 내부용: task --bg 가 detached 로 재실행하는 워커 엔트리. 문서화하지 않는다.
+  if (command === '_worker') {
+    await runWorker(flags._[0])
     return 0
   }
 
@@ -78,6 +149,9 @@ if (invokedDirectly) {
     .catch((err) => {
       if (err instanceof BridgeError) {
         process.stderr.write(`[${err.code}] ${err.message}\n`)
+        if (err.details?.reason) {
+          process.stderr.write(`  ${err.details.reason}\n`)
+        }
         if (err.details?.partial) {
           process.stderr.write(`\n부분 출력:\n${err.details.partial}\n`)
         }
