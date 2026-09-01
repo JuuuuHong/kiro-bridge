@@ -9,6 +9,7 @@ import { loadConfig, saveConfig, getCachedCapability, setCachedCapability } from
 import { bridgeError, CODES } from '../errors.mjs'
 
 export const TRANSPORTS = { ACP: 'acp', SUBPROCESS: 'subprocess' }
+export const NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000
 
 export function detectVersion({ bin = 'kiro-cli', execFileFn = execFile } = {}) {
   return new Promise((resolve) => {
@@ -22,7 +23,13 @@ export function detectVersion({ bin = 'kiro-cli', execFileFn = execFile } = {}) 
 
 // Cache-first. If absent, try one ACP handshake and record the result.
 export async function detectCapability(options = {}) {
-  const { bin = 'kiro-cli', force = false, probeFn = acp.probe } = options
+  const {
+    bin = 'kiro-cli',
+    force = false,
+    probeFn = acp.probe,
+    negativeCacheTtlMs = NEGATIVE_CACHE_TTL_MS,
+    now = Date.now(),
+  } = options
 
   const version = await detectVersion(options)
   if (!version) {
@@ -32,14 +39,22 @@ export async function detectCapability(options = {}) {
   const config = loadConfig()
   if (!force) {
     const cached = getCachedCapability(config, version)
-    if (cached?.transport) return { ...cached, version, cached: true }
+    if (cached?.transport === TRANSPORTS.ACP) {
+      return { ...cached, version, cached: true }
+    }
+    if (cached?.transport === TRANSPORTS.SUBPROCESS) {
+      const detectedAt = Date.parse(cached.detectedAt || '')
+      if (Number.isFinite(detectedAt) && now - detectedAt < negativeCacheTtlMs) {
+        return { ...cached, version, cached: true }
+      }
+    }
   }
 
   const probed = await probeFn({ bin })
   const capability = {
     transport: probed.available ? TRANSPORTS.ACP : TRANSPORTS.SUBPROCESS,
     reason: probed.available ? 'acp handshake ok' : probed.reason || 'acp unavailable',
-    detectedAt: new Date().toISOString(),
+    detectedAt: new Date(now).toISOString(),
   }
 
   try {

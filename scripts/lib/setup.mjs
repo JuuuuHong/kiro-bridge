@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { mkdtempSync, rmSync } from 'node:fs'
 
-import { detectVersion, detectCapability } from './transport/index.mjs'
+import { detectVersion, detectCapability, TRANSPORTS } from './transport/index.mjs'
 import { AGENT_DEFS, probeToolNaming, installAgent, agentsDir } from './agents.mjs'
 import { loadConfig, saveConfig } from './config.mjs'
 import { classifyOutput, CODES } from './errors.mjs'
@@ -58,12 +58,23 @@ export async function setup(options = {}) {
       detail: `${capability.transport} (${capability.cached ? 'cached' : capability.reason})`,
     })
   } catch (err) {
-    steps.push({ step: 'transport', ok: false, detail: String(err?.message || err) })
+    capability = {
+      transport: TRANSPORTS.SUBPROCESS,
+      reason: `ACP probe failed: ${String(err?.message || err)}`,
+      cached: false,
+    }
+    steps.push({
+      step: 'transport',
+      ok: true,
+      detail: `${capability.transport} fallback (${capability.reason})`,
+      warning: true,
+    })
   }
 
   // Install agents — resolve the tool naming convention by probing with validate (OQ4).
   const scratch = mkdtempSync(join(tmpdir(), 'kiro-bridge-agent-'))
   const installed = []
+  let resolvedToolNaming = null
   try {
     for (const [key, def] of Object.entries(AGENT_DEFS)) {
       const probe = await probeToolNaming(def, {
@@ -92,16 +103,19 @@ export async function setup(options = {}) {
         detail: `${result.action} (tool convention: ${probe.toolSet}) -> ${result.target}${result.reason ? ` — ${result.reason}` : ''}`,
       })
 
-      // Record the resolved naming convention so the next run doesn't re-probe.
-      const config = loadConfig()
-      try {
-        saveConfig({ ...config, toolNaming: probe.toolSet })
-      } catch {
-        // Failure to record is not fatal.
-      }
+      resolvedToolNaming = probe.toolSet
     }
   } finally {
     rmSync(scratch, { recursive: true, force: true })
+  }
+
+  if (resolvedToolNaming) {
+    try {
+      const config = loadConfig()
+      saveConfig({ ...config, toolNaming: resolvedToolNaming })
+    } catch {
+      // Failure to record is not fatal.
+    }
   }
 
   return { ok: steps.every((s) => s.ok), steps, installed, capability }

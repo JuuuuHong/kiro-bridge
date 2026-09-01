@@ -24,7 +24,8 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" review [ref] [flags]
 | `--timeout <ms>` | Default 180000 |
 | `--quiet` | Suppress progress output (stderr) |
 
-Progress goes to stderr, results to stdout. You only need to parse stdout.
+Progress goes to stderr and successful results to stdout. Parse stdout on success;
+on a non-zero exit, inspect stderr for the bracketed error code described below.
 
 ## Rules for handling the output — follow these strictly
 

@@ -163,3 +163,17 @@ test('shannonEntropy is low for a uniform string', () => {
   assert.ok(shannonEntropy('aaaaaaaa') < 0.001)
   assert.ok(shannonEntropy('aZ3kQ9pL2mX7vB4n') > 3.5)
 })
+
+
+test('positive: prefixed token assignments are masked', () => {
+  const secret = 'abcdefghijklmnopqrstuvwx'
+  const { text } = redactText(`SERVICE_TOKEN=${secret}`)
+  assert.ok(!text.includes(secret))
+  assert.match(text, /SERVICE_TOKEN=\[REDACTED:assigned-secret\]/)
+})
+
+test('exclude list: double-star crosses directories while single-star does not', () => {
+  assert.equal(isExcludedPath('secrets/prod/token.txt', ['secrets/**']), true)
+  assert.equal(isExcludedPath('secrets/prod/token.txt', ['secrets/*']), false)
+  assert.equal(isExcludedPath('secrets/token.txt', ['secrets/*']), true)
+})

@@ -183,8 +183,9 @@ export async function probeToolNaming(def, { validateFn, tmpPath }) {
 // Install. A file the user has modified is not overwritten, only warned about (design §6).
 export function installAgent(rendered, { dir = agentsDir(), force = false } = {}) {
   const target = join(dir, `${rendered.name}.json`)
+  const existed = existsSync(target)
 
-  if (existsSync(target) && !force) {
+  if (existed && !force) {
     let existing
     try {
       existing = JSON.parse(readFileSync(target, 'utf8'))
@@ -208,5 +209,5 @@ export function installAgent(rendered, { dir = agentsDir(), force = false } = {}
     _kiroBridge: { ...rendered._kiroBridge, hash: agentHash(rendered) },
   }
   writeAtomic(target, `${JSON.stringify(stamped, null, 2)}\n`)
-  return { target, action: existsSync(target) ? 'installed' : 'installed' }
+  return { target, action: existed ? 'updated' : 'installed' }
 }

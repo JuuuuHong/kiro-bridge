@@ -73,16 +73,17 @@ and Kiro's capabilities.
   denial to an explicit "insufficient permission" error instead of letting
   it pass as a plausible-looking result (ADR-002).
 - **Shell is never trusted**, in any agent, under any flag.
-- **No default path to full trust.** `--trust-all-tools` never becomes a
-  default; full trust opens only via an explicit `--yolo` flag plus a
-  pre-execution confirmation (ADR-002).
+- **No path to full trust.** `--trust-all-tools` is never enabled by this
+  plugin. Even the explicit `task --write` mode keeps shell untrusted and
+  grants only the worker agent's scoped write tools (ADR-002).
 - **Outbound redaction.** Diffs and file excerpts are filtered before
   leaving the machine — file exclusion list, secret-pattern masking,
   `--dry-run` payload preview, restricted-permission payload logs (design §7).
-- **Kiro output is treated as data, never as a command.** Findings are
-  always wrapped in a fixed trust boundary, sanitized against a schema, and
-  require explicit user approval with a diff preview before anything is
-  applied — no auto-apply flow exists (ADR-004).
+- **Kiro output is treated as data, never as a command.** Review findings are
+  always wrapped in a fixed trust boundary and schema-sanitized, and are never
+  auto-applied. `task --write` is a separate, explicit execution mode that can
+  modify scoped files; review its resulting git diff before accepting changes
+  (ADR-004).
 
 ## Design docs
 
@@ -93,7 +94,7 @@ and the ADRs under [`docs/decisions/`](docs/decisions/).
 
 ## Verified environment
 
-kiro-cli 2.20.1, macOS, 2026-09-01.
+kiro-cli 2.20.2, macOS, 2026-09-01.
 
 ## License
 

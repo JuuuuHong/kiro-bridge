@@ -38,9 +38,8 @@ having read the file.
    may write only under `.kiro/specs/`; aws-advisor is restricted to
    read-only `use_aws` operations against an allow-listed set of services.
 4. `--write` doesn't mean "full trust" — it means "use a scoped agent that
-   permits writes." No code path where `--trust-all-tools` becomes the
-   default is ever created; full trust is only opened via a separate
-   `--yolo` flag + a pre-execution user confirmation.
+   permits writes." No code path enabling `--trust-all-tools` or full trust
+   is created; shell remains untrusted in every bundled agent.
 5. On the ACP path, `session/request_permission` is brokered to Claude Code,
    mediating requests outside the static list interactively (ADR-001R).
 

@@ -1,6 +1,6 @@
 ---
 description: Have Kiro review the current diff and return findings
-argument-hint: "[ref] [--dry-run]"
+argument-hint: "[ref] [--dry-run] [--timeout <ms>] [--quiet]"
 ---
 
 Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" review $ARGUMENTS`.
@@ -15,3 +15,5 @@ Rules for handling the output:
   the user decide what to apply. Show a diff before making any fix.
 - `[TOOL_DENIED]` means the findings cannot be trusted. Point the user to
   `/kiro-bridge:setup`.
+- On a non-zero exit, inspect stderr for `[TOOL_DENIED]`, `[UNAUTHENTICATED]`,
+  `[THROTTLED]`, `[TIMEOUT]`, or another classified error code.

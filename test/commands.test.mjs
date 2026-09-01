@@ -6,13 +6,13 @@ import { join } from 'node:path'
 
 import { review, formatSummary } from '../scripts/lib/review.mjs'
 import { setup } from '../scripts/lib/setup.mjs'
-import { parseArgs } from '../scripts/bridge.mjs'
+import { parseArgs, validateCommandFlags } from '../scripts/bridge.mjs'
 import {
   renderAgent, agentHash, installAgent, probeToolNaming, AGENT_DEFS, TOOL_NAME_SETS,
 } from '../scripts/lib/agents.mjs'
 import { collectDiff } from '../scripts/lib/git.mjs'
 import { TRUST_FENCE } from '../scripts/lib/findings.mjs'
-import { CODES } from '../scripts/lib/errors.mjs'
+import { CODES, MESSAGES } from '../scripts/lib/errors.mjs'
 import { CONFIG_DEFAULTS } from '../scripts/lib/config.mjs'
 
 let home
@@ -79,7 +79,7 @@ test('review: the payload goes through redaction before being sent', async () =>
     config: CONFIG_DEFAULTS,
   })
   assert.ok(!sent.diff.includes('AKIAIOSFODNN7EXAMPLE'), 'the AWS key must not go out as-is')
-  assert.match(sent.diff, /\[REDACTED:aws-access-key\]/)
+  assert.match(sent.diff, /\[REDACTED:(?:aws-access-key|assigned-secret)\]/)
   assert.equal(sent.kind, 'review')
 })
 
@@ -340,4 +340,110 @@ test('git: specifying ref does not mix in working-tree untracked files', async (
   const r = await collectDiff({ ref: 'main', execFileFn })
   assert.deepEqual(r.untracked, [])
   assert.ok(!calls.includes('ls-files'))
+})
+
+
+test('review: excluded tracked files never enter payload.diff', async () => {
+  const secret = 'abcdefghijklmnopqrstuvwx'
+  const calls = []
+  const execFileFn = (_bin, args, _opts, cb) => {
+    calls.push(args)
+    if (args[0] === 'rev-parse') return cb(null, 'true\n', '')
+    if (args[0] === 'ls-files') return cb(null, '', '')
+    if (args.includes('--name-only')) return cb(null, '.env\n', '')
+    return cb(null, `diff --git a/.env b/.env\n+SERVICE_TOKEN=${secret}\n`, '')
+  }
+
+  const r = await review({
+    dryRun: true,
+    config: CONFIG_DEFAULTS,
+    collectDiffFn: (options) => collectDiff({ ...options, execFileFn }),
+  })
+
+  assert.equal(r.empty, true, 'excluded-only changes must not call Kiro')
+  assert.deepEqual(r.excludedFiles, ['.env'])
+  assert.equal(calls.some((args) => args[0] === 'diff' && !args.includes('--name-only')), false,
+    'git diff content must not be read for excluded paths')
+  assert.ok(!JSON.stringify(r).includes(secret))
+})
+
+
+test('parseArgs: rejects missing, non-finite, and non-positive timeout values', () => {
+  assert.throws(() => parseArgs(['review', '--timeout']), /requires .*value/)
+  assert.throws(() => parseArgs(['review', '--timeout', 'abc']), /positive finite/)
+  assert.throws(() => parseArgs(['review', '--timeout', '0']), /positive finite/)
+  assert.throws(() => parseArgs(['review', '--timeout', '-1']), /positive finite/)
+})
+
+test('parseArgs: rejects a missing value for model and follow-up', () => {
+  assert.throws(() => parseArgs(['task', '--model']), /requires .*value/)
+  assert.throws(() => parseArgs(['result', '--follow-up', '--quiet']), /requires .*value/)
+})
+
+test('validateCommandFlags: rejects flags silently ignored by a subcommand', () => {
+  const reviewArgs = parseArgs(['review', '--model', 'x'])
+  assert.throws(() => validateCommandFlags(reviewArgs.command, reviewArgs.flags), /not supported by review/)
+  const statusArgs = parseArgs(['status', '--quiet'])
+  assert.throws(() => validateCommandFlags(statusArgs.command, statusArgs.flags), /not supported by status/)
+})
+
+test('agents: a managed older version is reported as updated', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agents-'))
+  const rendered = renderAgent(AGENT_DEFS.reviewer, 'short')
+  const first = installAgent(rendered, { dir })
+  const existing = JSON.parse(readFileSync(first.target, 'utf8'))
+  existing._kiroBridge.version = '0.0.0'
+  writeFileSync(first.target, JSON.stringify(existing, null, 2))
+  assert.equal(installAgent(rendered, { dir }).action, 'updated')
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('errors: throttled guidance points to the installed command namespace', () => {
+  assert.match(MESSAGES[CODES.THROTTLED], /\/kiro-bridge:status/)
+  assert.doesNotMatch(MESSAGES[CODES.THROTTLED], /`\/kiro:status`/)
+})
+
+
+test('git: excluded untracked files are separated from reviewable files', async () => {
+  const execFileFn = (_bin, args, _opts, cb) => {
+    if (args[0] === 'rev-parse') return cb(null, 'true\n', '')
+    if (args[0] === 'ls-files') return cb(null, '.env\nsrc/new.mjs\n', '')
+    if (args.includes('--name-only')) return cb(null, '', '')
+    return cb(null, '', '')
+  }
+  const r = await collectDiff({
+    execFileFn,
+    excludeFiles: CONFIG_DEFAULTS.redaction.excludeFiles,
+  })
+  assert.deepEqual(r.files.map((f) => f.path), ['src/new.mjs'])
+  assert.deepEqual(r.untracked, ['src/new.mjs'])
+  assert.deepEqual(r.excludedFiles, ['.env'])
+})
+
+
+test('setup: ACP probe exception falls back to subprocess without failing install', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agents-'))
+  const execFileFn = (_bin, args, _opts, cb) => {
+    if (args[0] === '--version') return cb(null, 'kiro-cli 2.20.1\n', '')
+    if (args[0] === 'whoami') return cb(null, 'user@example.com\n', '')
+    return cb(null, '', '')
+  }
+  const r = await setup({
+    execFileFn,
+    dir,
+    probeFn: async () => { throw new Error('temporary ACP failure') },
+    validateFn: async () => true,
+  })
+  const transport = r.steps.find((step) => step.step === 'transport')
+  assert.equal(r.ok, true)
+  assert.equal(r.capability.transport, 'subprocess')
+  assert.equal(transport.ok, true)
+  assert.equal(transport.warning, true)
+  assert.ok(r.steps.some((step) => step.step === 'agent:reviewer' && step.ok))
+  rmSync(dir, { recursive: true, force: true })
+})
+
+
+test('parseArgs: rejects an empty follow-up value', () => {
+  assert.throws(() => parseArgs(['result', '--follow-up', '   ']), /non-empty value/)
 })

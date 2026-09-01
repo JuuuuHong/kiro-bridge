@@ -16,8 +16,26 @@ function initializeParams() {
   }
 }
 
+
+function terminateChild(child, graceMs = 500) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return null
+  try { child.kill('SIGTERM') } catch {}
+  const timer = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) {
+      try { child.kill('SIGKILL') } catch {}
+    }
+  }, graceMs)
+  timer.unref?.()
+  return timer
+}
+
 // Runs only the handshake to check ACP availability. No prompt is sent, so no credits are spent.
-export async function probe({ bin = 'kiro-cli', spawnFn = spawn, timeoutMs = 5000 } = {}) {
+export async function probe({
+  bin = 'kiro-cli',
+  spawnFn = spawn,
+  timeoutMs = 5000,
+  terminationGraceMs = 500,
+} = {}) {
   let child
   try {
     child = spawnFn(bin, ['acp'], { stdio: ['pipe', 'pipe', 'pipe'] })
@@ -27,8 +45,24 @@ export async function probe({ bin = 'kiro-cli', spawnFn = spawn, timeoutMs = 500
 
   const client = new JsonRpcClient({ write: (s) => child.stdin.write(s) })
   child.stdout.on('data', (c) => client.feed(c))
+  child.stderr.on('data', () => {}) // drain diagnostics so the pipe cannot back-pressure
+
+  const exited = new Promise((resolve) => {
+    child.once('close', (code) => {
+      client.close(bridgeError(CODES.PROTOCOL, { reason: 'kiro-cli exited during ACP probe', exitCode: code }))
+      resolve(code)
+    })
+    child.once('error', (err) => {
+      client.close(bridgeError(CODES.SPAWN_FAILED, { cause: String(err?.message || err) }))
+      resolve(-1)
+    })
+  })
+  child.stdin.once('error', (err) => {
+    client.close(bridgeError(CODES.SPAWN_FAILED, { cause: String(err?.message || err) }))
+  })
 
   const timer = setTimeout(() => client.close(bridgeError(CODES.TIMEOUT)), timeoutMs)
+  let forceKillTimer = null
   try {
     const result = await client.request('initialize', initializeParams())
     return { available: true, initialize: result }
@@ -37,7 +71,9 @@ export async function probe({ bin = 'kiro-cli', spawnFn = spawn, timeoutMs = 500
   } finally {
     clearTimeout(timer)
     client.close()
-    try { child.kill() } catch {}
+    forceKillTimer = terminateChild(child, terminationGraceMs)
+    await exited
+    if (forceKillTimer) clearTimeout(forceKillTimer)
   }
 }
 
@@ -53,6 +89,7 @@ export async function run(payload, options = {}) {
     onPermissionRequest,
     signal,
     timeoutMs = 180_000,
+    terminationGraceMs = 500,
     spawnFn = spawn,
   } = options
 
@@ -71,6 +108,14 @@ export async function run(payload, options = {}) {
   const collector = createCollector()
   let stderr = ''
   let timedOut = false
+  let forceKillTimer = null
+  let terminationStarted = false
+
+  const terminate = () => {
+    if (terminationStarted) return
+    terminationStarted = true
+    forceKillTimer = terminateChild(child, terminationGraceMs)
+  }
 
   const emit = (event) => {
     collector.push(event)
@@ -99,6 +144,9 @@ export async function run(payload, options = {}) {
 
   child.stdout.on('data', (c) => client.feed(c))
   child.stderr.on('data', (c) => { stderr += String(c) })
+  child.stdin.once('error', (err) => {
+    client.close(bridgeError(CODES.SPAWN_FAILED, { cause: String(err?.message || err), code: err?.code }))
+  })
 
   // If the process dies, pending requests are woken up immediately. Without
   // this, auth failures and crashes get misclassified as timeouts, and finding out takes timeoutMs.
@@ -117,14 +165,16 @@ export async function run(payload, options = {}) {
   const timer = setTimeout(() => {
     timedOut = true
     client.close(bridgeError(CODES.TIMEOUT))
-    try { child.kill('SIGTERM') } catch {}
+    terminate()
   }, timeoutMs)
 
   const onAbort = () => {
     if (sessionId) client.notify('session/cancel', { sessionId })
-    setTimeout(() => { try { child.kill('SIGTERM') } catch {} }, 500)
+    client.close(bridgeError(CODES.CANCELLED, { sessionId }))
+    terminate()
   }
   signal?.addEventListener('abort', onAbort, { once: true })
+  if (signal?.aborted) onAbort()
 
   try {
     await client.request('initialize', initializeParams())
@@ -173,7 +223,8 @@ export async function run(payload, options = {}) {
     signal?.removeEventListener('abort', onAbort)
     client.close()
     try { child.stdin.end() } catch {}
-    try { child.kill() } catch {}
+    terminate()
     await exited
+    if (forceKillTimer) clearTimeout(forceKillTimer)
   }
 }

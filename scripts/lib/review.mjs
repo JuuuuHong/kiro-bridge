@@ -31,18 +31,52 @@ export async function review(options = {}) {
     config = loadConfig(),
   } = options
 
-  const { diff, files, untracked = [], ref: usedRef } = await collectDiffFn({ cwd, ref })
+  const {
+    diff,
+    files,
+    excludedFiles: collectedExcluded = [],
+    untracked = [],
+    ref: usedRef,
+  } = await collectDiffFn({
+    cwd,
+    ref,
+    excludeFiles: config.redaction.excludeFiles,
+  })
 
   // Untracked-only cases still count as review targets — ending empty-handed
   // just because diff is empty would silently review nothing when "only new files were created".
   if (!diff.trim() && files.length === 0) {
-    return { empty: true, ref: usedRef, message: `No changes relative to ${usedRef}.` }
+    const suffix = collectedExcluded.length > 0
+      ? ` (${collectedExcluded.length} excluded file(s))`
+      : ''
+    return {
+      empty: true,
+      ref: usedRef,
+      excludedFiles: collectedExcluded,
+      message: `No reviewable changes relative to ${usedRef}${suffix}.`,
+    }
   }
 
-  const { payload, redactions, excludedFiles } = buildPayload(
+  const {
+    payload,
+    redactions,
+    excludedFiles: payloadExcluded,
+  } = buildPayload(
     { kind: 'review', goal, diff, files, constraints: DEFAULT_CONSTRAINTS },
     { redaction: config.redaction },
   )
+  const excludedFiles = [...new Set([...collectedExcluded, ...payloadExcluded])]
+
+  // All changed paths may have been intentionally excluded. Do not spend
+  // credits on a payload with no review target.
+  if (!payload.diff?.trim() && !payload.files?.length) {
+    return {
+      empty: true,
+      ref: usedRef,
+      excludedFiles,
+      message: `No reviewable changes relative to ${usedRef} (${excludedFiles.length} excluded file(s)).`,
+    }
+  }
 
   // Path for a human to inspect the payload right before it's sent (design §7).
   if (dryRun) {

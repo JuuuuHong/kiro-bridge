@@ -111,7 +111,7 @@ test('task --bg: creates a job and spawns the worker detached', async () => {
   assert.equal(spawned[0].args[2], bg.jobId)
   assert.equal(spawned[0].opts.detached, true)
   const job = jobs.readJob(bg.jobId, CWD)
-  assert.equal(job.meta.pid, 4242)
+  assert.equal(job.meta.pid, null, 'only the worker records its own pid')
   assert.equal(job.status, 'queued')
   assert.match(formatTask({ background: true, jobId: bg.jobId }), /result/)
 })
@@ -209,4 +209,50 @@ test('spec: sends a kind=spec payload to the spec-writer agent', async () => {
 
 test('spec: rejects when goal is empty', async () => {
   await assert.rejects(() => spec({ goal: '' }), (err) => err.code === CODES.PROTOCOL)
+})
+
+
+test('task --bg: spawn failure records a terminal failed job', async () => {
+  await assert.rejects(
+    task({
+      goal: 'background investigation',
+      background: true,
+      cwd: CWD,
+      spawnFn: () => { throw new Error('EMFILE') },
+    }),
+    (err) => err.code === CODES.SPAWN_FAILED,
+  )
+  const list = jobs.listJobs({ cwd: CWD })
+  assert.equal(list.length, 1)
+  assert.equal(list[0].status, 'failed')
+  assert.match(list[0].meta.error, /SPAWN_FAILED.*EMFILE/)
+})
+
+test('runWorker: pid is durable before running can be reaped', async () => {
+  const { jobId } = jobs.createJob({
+    cwd: CWD, command: 'task', payloadOptions: { goal: 'g', write: false },
+  })
+  await runWorker(jobId, {
+    cwd: CWD,
+    runFn: async (...args) => {
+      assert.deepEqual(jobs.reapOrphans(CWD), [])
+      const running = jobs.readJob(jobId, CWD)
+      assert.equal(running.status, 'running')
+      assert.equal(running.meta.pid, process.pid)
+      return okRun()(...args)
+    },
+  })
+  assert.equal(jobs.readJob(jobId, CWD).status, 'done')
+})
+
+test('runWorker: a job cancelled before worker start never executes', async () => {
+  const { jobId } = jobs.createJob({
+    cwd: CWD, command: 'task', payloadOptions: { goal: 'g', write: false },
+  })
+  jobs.transition(jobId, 'cancelled', CWD)
+  let called = false
+  const result = await runWorker(jobId, { cwd: CWD, runFn: async () => { called = true } })
+  assert.equal(result, null)
+  assert.equal(called, false)
+  assert.equal(jobs.readJob(jobId, CWD).status, 'cancelled')
 })

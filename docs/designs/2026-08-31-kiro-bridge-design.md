@@ -126,9 +126,9 @@ Capability detection results are cached in `~/.kiro-bridge/config.json`, keyed b
   it was unreachable; it's corrected to `/kiro-bridge:*` to match the actual
   name `kiro-bridge` (confirmed against the installed plugin
   `oh-my-claudecode` + `commands/hud.md` → `/oh-my-claudecode:hud`).
-- No code path where `--trust-all-tools` becomes the default is ever created
-  (ADR-002). Full trust is only opened via explicit `--yolo` + a
-  pre-execution confirmation.
+- No code path enabling `--trust-all-tools` or full trust is created
+  (ADR-002). `--write` selects only the scoped worker agent and shell remains
+  untrusted.
 - model/effort have per-command defaults with `--model`/`--effort`
   overrides. Per-call credit consumption is logged to
   `~/.kiro-bridge/usage.jsonl` and shown cumulatively in `/kiro-bridge:status`.

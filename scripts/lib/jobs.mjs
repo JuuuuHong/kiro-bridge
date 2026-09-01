@@ -156,10 +156,21 @@ export function isProcessAlive(pid) {
   }
 }
 
-export function reapOrphans(cwd = process.cwd()) {
+export function reapOrphans(cwd = process.cwd(), options = {}) {
+  const { now = Date.now(), startupGraceMs = 5000 } = options
   const reaped = []
   for (const job of listJobs({ cwd })) {
-    if (job.status === 'running' && !isProcessAlive(job.meta.pid)) {
+    const alive = isProcessAlive(job.meta.pid)
+    const createdAt = Date.parse(job.meta.createdAt || '')
+    const startupExpired = Number.isFinite(createdAt) && now - createdAt >= startupGraceMs
+
+    if (job.status === 'queued' && startupExpired && !alive) {
+      updateMeta(job.jobId, { error: 'orphaned: worker process did not start' }, cwd)
+      transition(job.jobId, 'failed', cwd)
+      reaped.push(job.jobId)
+      continue
+    }
+    if (job.status === 'running' && !alive) {
       updateMeta(job.jobId, { error: 'orphaned: process no longer alive' }, cwd)
       transition(job.jobId, 'failed', cwd)
       reaped.push(job.jobId)

@@ -1,6 +1,6 @@
 ---
 description: Retrieve the result of a background job. --follow-up continues the session for a follow-up question
-argument-hint: "[job-id] [--follow-up <question>]"
+argument-hint: "[job-id] [--follow-up <question>] [--timeout <ms>] [--quiet]"
 ---
 
 Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" result $ARGUMENTS`.

@@ -184,3 +184,60 @@ test('acp.probe: available:false when the acp subcommand is missing', async () =
   const r = await acp.probe({ spawnFn: mockSpawn('acp-unavailable'), timeoutMs: 2000 })
   assert.equal(r.available, false)
 })
+
+
+test('acp: timeout force-kills a child that ignores SIGTERM', async () => {
+  const started = Date.now()
+  await assert.rejects(
+    acp.run(PAYLOAD, {
+      spawnFn: mockSpawn('timeout-ignore-term'),
+      timeoutMs: 100,
+      terminationGraceMs: 50,
+    }),
+    (err) => err.code === CODES.TIMEOUT,
+  )
+  assert.ok(Date.now() - started < 1000, 'timeout must remain bounded')
+})
+
+test('subprocess: timeout force-kills a child that ignores SIGTERM', async () => {
+  const started = Date.now()
+  await assert.rejects(
+    subprocess.run(PAYLOAD, {
+      spawnFn: mockSpawn('timeout-ignore-term'),
+      timeoutMs: 100,
+      terminationGraceMs: 50,
+    }),
+    (err) => err.code === CODES.TIMEOUT,
+  )
+  assert.ok(Date.now() - started < 1000, 'timeout must remain bounded')
+})
+
+test('subprocess: early child exit turns stdin EPIPE into SPAWN_FAILED', async () => {
+  await assert.rejects(
+    subprocess.run(
+      { kind: 'task', goal: 'x'.repeat(8 * 1024 * 1024) },
+      {
+        timeoutMs: 2000,
+        spawnFn: (_bin, _args, opts) => spawn(process.execPath, ['-e', 'process.exit(0)'], opts),
+      },
+    ),
+    (err) => err.code === CODES.SPAWN_FAILED && /stdin|pipe|write/i.test(err.details.cause),
+  )
+})
+
+
+test('acp: a pre-aborted signal still force-terminates the child', async () => {
+  const controller = new AbortController()
+  controller.abort()
+  const started = Date.now()
+  await assert.rejects(
+    acp.run(PAYLOAD, {
+      spawnFn: mockSpawn('timeout-ignore-term'),
+      signal: controller.signal,
+      timeoutMs: 2000,
+      terminationGraceMs: 50,
+    }),
+    (err) => err.code === CODES.CANCELLED,
+  )
+  assert.ok(Date.now() - started < 1000, 'pre-aborted cancellation must remain bounded')
+})

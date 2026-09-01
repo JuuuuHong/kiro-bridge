@@ -4,6 +4,7 @@
 // is user input, so it must only be passed as an argument array — `--` also blocks option injection.
 import { execFile } from 'node:child_process'
 import { bridgeError, CODES } from './errors.mjs'
+import { isExcludedPath } from './context.mjs'
 
 const MAX_BUFFER = 64 * 1024 * 1024
 
@@ -37,12 +38,15 @@ export async function resolveRef(ref, options = {}) {
   }
 }
 
-function diffArgs(ref, nameOnly) {
+function diffArgs(ref, nameOnly, paths = null) {
   const base = ['diff']
   if (nameOnly) base.push('--name-only')
   // Compare against ref if given, otherwise against HEAD (staged + unstaged).
   base.push(ref || 'HEAD')
   base.push('--')
+  // Use literal pathspecs so a repository path beginning with ':' cannot be
+  // interpreted as pathspec magic. An empty path list is handled by the caller.
+  if (paths) base.push(...paths.map((path) => `:(literal)${path}`))
   return base
 }
 
@@ -63,31 +67,40 @@ export async function listUntracked(options = {}) {
 // it's better for Kiro to read it itself via read/grep (ADR-003 decision 5).
 // Untracked files pass only their path for the same reason, no content.
 export async function collectDiff(options = {}) {
-  const { ref = null } = options
+  const { ref = null, excludeFiles = [] } = options
 
   if (!(await isGitRepo(options))) {
     throw bridgeError(CODES.PROTOCOL, { reason: 'not a git repository' })
   }
   await resolveRef(ref, options)
 
-  const [diff, nameOnly, untracked] = await Promise.all([
-    run(diffArgs(ref, false), options),
+  // Resolve names before content so excluded paths never enter the outbound
+  // diff buffer at all. The full file list is retained for the exclusion audit.
+  const [nameOnly, untracked] = await Promise.all([
     run(diffArgs(ref, true), options),
     // If ref was given, this is a comparison against that point, so working-tree state is not mixed in.
     ref ? Promise.resolve([]) : listUntracked(options),
   ])
 
-  const files = nameOnly
+  const tracked = nameOnly
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((path) => ({ path, reason: 'changed in diff' }))
+  const allowedTracked = tracked.filter((path) => !isExcludedPath(path, excludeFiles))
+  const allowedUntracked = untracked.filter((path) => !isExcludedPath(path, excludeFiles))
+  const excludedFiles = [...tracked, ...untracked]
+    .filter((path) => isExcludedPath(path, excludeFiles))
+  const diff = allowedTracked.length > 0
+    ? await run(diffArgs(ref, false, allowedTracked), options)
+    : ''
 
-  for (const path of untracked) {
+  const files = allowedTracked.map((path) => ({ path, reason: 'changed in diff' }))
+
+  for (const path of allowedUntracked) {
     files.push({ path, reason: 'untracked new file — not in diff, read it directly to review' })
   }
 
-  return { diff, files, untracked, ref: ref || 'HEAD' }
+  return { diff, files, excludedFiles, untracked: allowedUntracked, ref: ref || 'HEAD' }
 }
 
 export async function currentBranch(options = {}) {

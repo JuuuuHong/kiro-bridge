@@ -12,7 +12,9 @@ argument-hint: "[--force]"
 node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" setup [--force]
 ```
 
-Prints `✓`/`✗` per step. Stops at the first failed step rather than continuing.
+Prints `✓`/`✗` per step. Stops on version or authentication failure;
+a failed ACP transport probe records a warning, falls back to subprocess, and
+continues with agent installation.
 
 | Step | What it checks | On failure |
 |---|---|---|

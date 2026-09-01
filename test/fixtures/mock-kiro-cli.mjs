@@ -21,6 +21,10 @@ if (mode === 'acp') {
     process.stderr.write('unknown subcommand: acp\n')
     process.exit(2)
   }
+  if (scenario === 'timeout-ignore-term') {
+    process.on('SIGTERM', () => {})
+    setInterval(() => {}, 1000)
+  }
 
   const update = (sessionId, u) => send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: u } })
 
@@ -89,7 +93,7 @@ if (mode === 'acp') {
         return
       }
 
-      if (scenario === 'timeout') {
+      if (scenario === 'timeout' || scenario === 'timeout-ignore-term') {
         return // never respond, hangs
       }
 
@@ -113,7 +117,9 @@ if (mode === 'acp') {
     }
   })
 
-  process.stdin.on('end', () => process.exit(0))
+  process.stdin.on('end', () => {
+    if (scenario !== 'timeout-ignore-term') process.exit(0)
+  })
 }
 
 // --- subprocess (stream-json) mode ----------------------------------------
@@ -121,6 +127,11 @@ else if (mode === 'chat') {
   let input = ''
   process.stdin.on('data', (c) => { input += c })
   process.stdin.on('end', () => {
+    if (scenario === 'timeout-ignore-term') {
+      process.on('SIGTERM', () => {})
+      setInterval(() => {}, 1000)
+      return
+    }
     if (scenario === 'unauthenticated') {
       process.stderr.write('authentication required\n')
       process.exit(1)

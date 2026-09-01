@@ -119,3 +119,22 @@ test('gcJobs: removes only terminal jobs past the retention period', () => {
   assert.equal(jobs.readJob(old.jobId, CWD), null)
   assert.ok(jobs.readJob(fresh.jobId, CWD))
 })
+
+
+test('reapOrphans: marks a stale queued job failed when worker never started', () => {
+  const { jobId } = jobs.createJob({ cwd: CWD, command: 'task' })
+  const job = jobs.readJob(jobId, CWD)
+  const now = Date.parse(job.meta.createdAt) + 5001
+  assert.deepEqual(jobs.reapOrphans(CWD, { now, startupGraceMs: 5000 }), [jobId])
+  const reaped = jobs.readJob(jobId, CWD)
+  assert.equal(reaped.status, 'failed')
+  assert.match(reaped.meta.error, /did not start/)
+})
+
+test('reapOrphans: leaves a fresh queued job in its startup grace period', () => {
+  const { jobId } = jobs.createJob({ cwd: CWD, command: 'task' })
+  const job = jobs.readJob(jobId, CWD)
+  const now = Date.parse(job.meta.createdAt) + 100
+  assert.deepEqual(jobs.reapOrphans(CWD, { now, startupGraceMs: 5000 }), [])
+  assert.equal(jobs.readJob(jobId, CWD).status, 'queued')
+})

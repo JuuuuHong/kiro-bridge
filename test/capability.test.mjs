@@ -4,7 +4,9 @@ import { mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { detectVersion, detectCapability, TRANSPORTS } from '../scripts/lib/transport/index.mjs'
+import {
+  detectVersion, detectCapability, TRANSPORTS, NEGATIVE_CACHE_TTL_MS,
+} from '../scripts/lib/transport/index.mjs'
 import { loadConfig, saveConfig, configPath, getCachedCapability } from '../scripts/lib/config.mjs'
 import { CODES } from '../scripts/lib/errors.mjs'
 
@@ -126,4 +128,29 @@ test('detectCapability: TRANSPORT_UNAVAILABLE when kiro-cli is missing', async (
     detectCapability({ execFileFn: versionMissing, probeFn: async () => ({ available: true }) }),
     (err) => err.code === CODES.TRANSPORT_UNAVAILABLE,
   )
+})
+
+
+test('detectCapability: a negative cache expires and ACP is probed again', async () => {
+  let probes = 0
+  const probeFn = async () => {
+    probes += 1
+    return probes === 1
+      ? { available: false, reason: 'temporary failure' }
+      : { available: true }
+  }
+  const base = Date.now()
+  const first = await detectCapability({ execFileFn: versionOk, probeFn, now: base })
+  const cached = await detectCapability({
+    execFileFn: versionOk, probeFn, now: base + NEGATIVE_CACHE_TTL_MS - 1,
+  })
+  const recovered = await detectCapability({
+    execFileFn: versionOk, probeFn, now: base + NEGATIVE_CACHE_TTL_MS + 1,
+  })
+
+  assert.equal(first.transport, TRANSPORTS.SUBPROCESS)
+  assert.equal(cached.cached, true)
+  assert.equal(recovered.transport, TRANSPORTS.ACP)
+  assert.equal(recovered.cached, false)
+  assert.equal(probes, 2)
 })

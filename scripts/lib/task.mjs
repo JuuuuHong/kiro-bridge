@@ -149,14 +149,29 @@ export function spawnBackground({ goal, write, cwd, timeoutMs, model, effort, sp
   const logs = jobs.jobLogPaths(jobId, cwd)
   const out = openSync(logs.stdout, 'a')
   const errFd = openSync(logs.stderr, 'a')
+  let child
   try {
-    const child = spawnFn(process.execPath, [bridgePath(), '_worker', jobId], {
+    child = spawnFn(process.execPath, [bridgePath(), '_worker', jobId], {
       cwd,
       detached: true,
       stdio: ['ignore', out, errFd],
     })
+    if (!child || !Number.isInteger(child.pid) || child.pid <= 0) {
+      throw new Error('worker process did not provide a valid pid')
+    }
+    child.once?.('error', (err) => {
+      const current = jobs.readJob(jobId, cwd)
+      if (!current || jobs.TERMINAL.has(current.status)) return
+      jobs.updateMeta(jobId, { error: `[${CODES.SPAWN_FAILED}] ${String(err?.message || err)}` }, cwd)
+      jobs.transition(jobId, 'failed', cwd)
+    })
+    // The worker records its own PID before transitioning to running. Keeping
+    // the parent from writing meta removes the running+pid:null race entirely.
     child.unref()
-    jobs.updateMeta(jobId, { pid: child.pid, startedAt: new Date().toISOString() }, cwd)
+  } catch (err) {
+    jobs.updateMeta(jobId, { error: `[${CODES.SPAWN_FAILED}] ${String(err?.message || err)}` }, cwd)
+    jobs.transition(jobId, 'failed', cwd)
+    throw bridgeError(CODES.SPAWN_FAILED, { jobId, cause: String(err?.message || err) })
   } finally {
     closeSync(out)
     closeSync(errFd)
@@ -169,8 +184,16 @@ export function spawnBackground({ goal, write, cwd, timeoutMs, model, effort, sp
 export async function runWorker(jobId, { cwd = process.cwd(), runFn } = {}) {
   const job = jobs.readJob(jobId, cwd)
   if (!job) throw new Error(`unknown job: ${jobId}`)
+  if (jobs.TERMINAL.has(job.status)) return null
 
-  jobs.transition(jobId, 'running', cwd)
+  // PID must be durable before status becomes running; reapOrphans can then
+  // never observe a live worker as running+pid:null.
+  jobs.updateMeta(jobId, {
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+  }, cwd)
+  const started = jobs.transition(jobId, 'running', cwd)
+  if (started !== 'running') return null
   const { goal, write, timeoutMs, model, effort } = job.meta.payloadOptions
 
   try {

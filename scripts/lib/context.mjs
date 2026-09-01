@@ -21,7 +21,7 @@ export const LIMITS = {
 const AWS_ACCESS_KEY = /\b(?:AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ABIA|ACCA)[0-9A-Z]{16}\b/g
 const PEM_BLOCK = /-----BEGIN(?:[A-Z ]*)PRIVATE KEY-----[\s\S]*?-----END(?:[A-Z ]*)PRIVATE KEY-----/g
 const ASSIGNED_SECRET =
-  /\b(aws_secret_access_key|aws_session_token|password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)\b(\s*[=:]\s*)(["']?)([^\s"'`,;]{6,})\3/gi
+  /\b((?:[a-z0-9]+[_-])*(?:aws_secret_access_key|aws_session_token|password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key|token))\b(\s*[=:]\s*)(["']?)([^\s"'`,;]{6,})\3/gi
 // High-entropy candidate. Only considers 32+ chars containing upper, lower, and digits —
 // a deliberate constraint to avoid flagging git SHAs (lowercase hex) and ordinary identifiers.
 const ENTROPY_CANDIDATE = /[A-Za-z0-9+/=_-]{32,}/g
@@ -43,10 +43,24 @@ function looksMixedCharset(str) {
   return /[a-z]/.test(str) && /[A-Z]/.test(str) && /[0-9]/.test(str)
 }
 
-// glob-lite: only `*` is supported. Checked against both the full path and the basename.
+// glob-lite: `*` matches within one path segment; `**` crosses directories.
+// Patterns are checked against both the full path and the basename.
 function globToRegExp(pattern) {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')
-  return new RegExp(`^${escaped}$`, 'i')
+  let source = ''
+  for (let i = 0; i < pattern.length; i += 1) {
+    const ch = pattern[i]
+    if (ch === '*' && pattern[i + 1] === '*') {
+      source += '.*'
+      i += 1
+    } else if (ch === '*') {
+      source += '[^/]*'
+    } else if (/[.+^${}()|[\]\\]/.test(ch)) {
+      source += `\\${ch}`
+    } else {
+      source += ch
+    }
+  }
+  return new RegExp(`^${source}$`, 'i')
 }
 
 export function isExcludedPath(path, patterns) {
@@ -89,7 +103,8 @@ export function redactText(text, options = {}) {
   count('aws-access-key', n)
 
   n = 0
-  out = out.replace(ASSIGNED_SECRET, (_m, key, sep, quote) => {
+  out = out.replace(ASSIGNED_SECRET, (match, key, sep, quote, value) => {
+    if (value.startsWith('[REDACTED:')) return match
     n += 1
     return `${key}${sep}${quote}[REDACTED:assigned-secret]${quote}`
   })

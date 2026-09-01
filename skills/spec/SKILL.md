@@ -1,7 +1,7 @@
 ---
 name: spec
 description: Use Kiro as the spec writer to refine a feature request into EARS requirements + a design document. Use before implementation when requirements need structuring, or when the user says "let's start with a spec."
-argument-hint: "<feature description> [--model <id>] [--effort <lv>]"
+argument-hint: "<feature description> [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]"
 ---
 
 # kiro-bridge:spec

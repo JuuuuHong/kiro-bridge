@@ -67,7 +67,7 @@ export function classifyOutput(text) {
 export const MESSAGES = {
   [CODES.TIMEOUT]: 'Timed out. Returning partial output only (not retried).',
   [CODES.UNAUTHENTICATED]: 'Kiro authentication required. Run `kiro-cli login`.',
-  [CODES.THROTTLED]: 'Credits exhausted or throttled. Check usage with `/kiro:status`.',
+  [CODES.THROTTLED]: 'Credits exhausted or throttled. Check usage with `/kiro-bridge:status`.',
   [CODES.TOOL_DENIED]:
     'Kiro could not read a needed file due to insufficient tool permissions. Findings cannot be trusted, so this is promoted to an error.',
   [CODES.TRANSPORT_UNAVAILABLE]: 'kiro-cli could not be found or executed.',
