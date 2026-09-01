@@ -6,7 +6,7 @@
   "description": "Claude Code plugin bridging Kiro CLI via ACP",
   "scripts": {
     "check": "find scripts test -name '*.mjs' -type f -print0 | xargs -0 -n1 node --check",
-    "test": "node --test \"test/*.test.mjs\""
+    "test": "node --test test/*.test.mjs"
   },
   "engines": {
     "node": ">=20"

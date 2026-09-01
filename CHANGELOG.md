@@ -72,6 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Cancellation fails closed when a live PID's identity is absent,
   unverifiable, or mismatched (no signal, no transition), and orphan reaping
   treats a live-but-mismatched PID as orphaned without killing it.
+- **Node 20 test discovery.** The `npm test` glob is now expanded by the
+  POSIX shell instead of being passed as a quoted literal path to Node 20.
 - **Documentation contract.** Removed the false restricted-permission
   payload-log claim from the READMEs, CHANGELOG, and design §7; clarified that
   redaction covers only bridge-built payloads, that transmitted payloads are
