@@ -91,6 +91,9 @@ export async function runDelegated({
     cwd,
     durationMs: Date.now() - startedAt,
     contextUsagePercentage: res.metadata?.contextUsagePercentage,
+    acpUsed: res.metadata?.usage?.used,
+    acpSize: res.metadata?.usage?.size,
+    acpCost: res.metadata?.usage?.cost,
   })
 
   const parsed = parseResponse(res.result)
@@ -165,12 +168,22 @@ export function spawnBackground({ goal, write, cwd, timeoutMs, model, effort, sp
       jobs.updateMeta(jobId, { error: `[${CODES.SPAWN_FAILED}] ${String(err?.message || err)}` }, cwd)
       jobs.transition(jobId, 'failed', cwd)
     })
-    // The worker records its own PID before transitioning to running. Keeping
-    // the parent from writing meta removes the running+pid:null race entirely.
+    // Persist the spawned child's PID + best-effort identity while the job is
+    // still queued, so reapOrphans can tell "worker spawned but hasn't flipped
+    // to running yet" apart from "worker never started". The write goes through
+    // the per-job lock via an updater callback: if the worker started fast and
+    // already reasserted its own pid/identity/startedAt, we must not clobber
+    // those fresher fields — only fill in what the worker hasn't written yet.
+    jobs.updateMeta(jobId, (meta) => {
+      const patch = { spawnedAt: new Date().toISOString() }
+      if (meta.pid == null) patch.pid = child.pid
+      if (meta.procIdentity == null) patch.procIdentity = jobs.processIdentity(child.pid)
+      return patch
+    }, cwd)
     child.unref()
   } catch (err) {
-    jobs.updateMeta(jobId, { error: `[${CODES.SPAWN_FAILED}] ${String(err?.message || err)}` }, cwd)
-    jobs.transition(jobId, 'failed', cwd)
+    const message = `[${CODES.SPAWN_FAILED}] ${String(err?.message || err)}`
+    try { jobs.failJob(jobId, message, cwd) } catch {}
     throw bridgeError(CODES.SPAWN_FAILED, { jobId, cause: String(err?.message || err) })
   } finally {
     closeSync(out)
@@ -186,17 +199,20 @@ export async function runWorker(jobId, { cwd = process.cwd(), runFn } = {}) {
   if (!job) throw new Error(`unknown job: ${jobId}`)
   if (jobs.TERMINAL.has(job.status)) return null
 
-  // PID must be durable before status becomes running; reapOrphans can then
-  // never observe a live worker as running+pid:null.
-  jobs.updateMeta(jobId, {
-    pid: process.pid,
-    startedAt: new Date().toISOString(),
-  }, cwd)
-  const started = jobs.transition(jobId, 'running', cwd)
-  if (started !== 'running') return null
-  const { goal, write, timeoutMs, model, effort } = job.meta.payloadOptions
-
   try {
+    // PID metadata and queued→running are one locked operation. Keeping startup
+    // inside this try also ensures any lock or malformed-payload failure reaches
+    // the explicit failed-state path instead of escaping as a queued worker.
+    const now = new Date().toISOString()
+    const started = jobs.startJob(jobId, {
+      pid: process.pid,
+      procIdentity: jobs.processIdentity(process.pid),
+      startedAt: now,
+      lastProgressAt: now,
+    }, cwd)
+    if (started !== 'running') return null
+
+    const { goal, write, timeoutMs, model, effort } = job.meta.payloadOptions
     const result = await runDelegated({
       kind: 'task',
       goal,
@@ -205,17 +221,32 @@ export async function runWorker(jobId, { cwd = process.cwd(), runFn } = {}) {
       timeoutMs: timeoutMs || DEFAULT_TIMEOUT_MS,
       model,
       effort,
+      onEvent: (event) => { jobs.recordJobEvent(jobId, event, { cwd }) },
       runFn: runFn || transport.run,
       command: 'task:bg',
     })
-    jobs.writeResult(jobId, result.wrapped, cwd)
-    jobs.updateMeta(jobId, { sessionId: result.sessionId, transport: result.transport }, cwd)
-    jobs.transition(jobId, 'done', cwd)
-    return result
+    const metaPatch = { sessionId: result.sessionId, transport: result.transport }
+    // Persist latest structured usage/plan from the completed ACP result.
+    if (result.metadata?.usage) {
+      const u = result.metadata.usage
+      metaPatch.usage = {
+        used: Number.isFinite(u.used) ? u.used : null,
+        size: Number.isFinite(u.size) ? u.size : null,
+        cost: jobs.sanitizeCost(u.cost),
+      }
+    }
+    if (result.metadata?.plan?.entries) {
+      metaPatch.plan = jobs.summarizePlan(result.metadata.plan.entries)
+    }
+    // Result + metadata + running→done share one lock. If cancel won first,
+    // completeJob returns cancelled and never persists a result body.
+    const finished = jobs.completeJob(jobId, result.wrapped, metaPatch, cwd)
+    return finished === 'done' ? result : null
   } catch (err) {
     const message = err instanceof BridgeError ? `[${err.code}] ${err.message}` : String(err?.stack || err)
-    jobs.updateMeta(jobId, { error: message }, cwd)
-    jobs.transition(jobId, 'failed', cwd)
+    // A startup lock timeout may still have a live holder. Keep this best-effort
+    // and bounded; reapOrphans remains the final self-healing fallback.
+    try { jobs.failJob(jobId, message, cwd, { timeoutMs: 250 }) } catch {}
     throw err
   }
 }
@@ -261,6 +292,10 @@ export async function result(options = {}) {
   recordUsage({
     command: 'result:follow-up', agent: agentDef.name, transport: res.transport,
     cwd, durationMs: Date.now() - startedAt,
+    contextUsagePercentage: res.metadata?.contextUsagePercentage,
+    acpUsed: res.metadata?.usage?.used,
+    acpSize: res.metadata?.usage?.size,
+    acpCost: res.metadata?.usage?.cost,
   })
 
   const parsed = parseResponse(res.result)
@@ -268,11 +303,12 @@ export async function result(options = {}) {
   return { jobId, status: job.status, meta: job.meta, body, followUp: { question: followUp, wrapped } }
 }
 
-export function status({ cwd = process.cwd(), config = loadConfig() } = {}) {
-  jobs.reapOrphans(cwd)
-  const removed = jobs.gcJobs({ cwd, retentionDays: config.logRetentionDays })
+export function status({ cwd = process.cwd(), config = loadConfig(), now = Date.now(), identityFn } = {}) {
+  jobs.reapOrphans(cwd, { now, ...(identityFn ? { identityFn } : {}) })
+  const removed = jobs.gcJobs({ cwd, retentionDays: config.logRetentionDays, now })
   const list = jobs.listJobs({ cwd })
-  return { jobs: list, gcRemoved: removed, usage: readUsage() }
+  const withHealth = list.map((job) => ({ ...job, health: jobs.classifyHealth(job, { now }) }))
+  return { jobs: withHealth, gcRemoved: removed, usage: readUsage() }
 }
 
 export function cancel({ jobId, cwd = process.cwd() } = {}) {
@@ -313,8 +349,20 @@ export function formatStatus(res) {
   } else {
     lines.push('Jobs (this repository):')
     for (const job of res.jobs) {
+      const health = job.health && job.health !== job.status ? ` [${job.health}]` : ''
       const done = job.meta.finishedAt ? ` (finished ${job.meta.finishedAt})` : ''
-      lines.push(`  ${job.jobId}  ${job.status}${done}`)
+      lines.push(`  ${job.jobId}  ${job.status}${health}${done}`)
+      if (job.meta.lastProgressAt && !jobs.TERMINAL.has(job.status)) {
+        lines.push(`    Last progress: ${job.meta.lastProgressAt}`)
+      }
+      if (job.meta.usage) {
+        const u = job.meta.usage
+        lines.push(`    Usage: used=${u.used ?? '-'} size=${u.size ?? '-'} cost=${jobs.formatCost(u.cost)}`)
+      }
+      const recent = Array.isArray(job.meta.recentEvents) ? job.meta.recentEvents.slice(-3) : []
+      for (const ev of recent) {
+        lines.push(`    · ${jobs.formatEventSummary(ev)}`)
+      }
     }
   }
   if (res.gcRemoved.length > 0) lines.push(`GC: ${res.gcRemoved.length} job(s) cleaned up`)

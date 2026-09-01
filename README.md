@@ -76,9 +76,13 @@ and Kiro's capabilities.
 - **No path to full trust.** `--trust-all-tools` is never enabled by this
   plugin. Even the explicit `task --write` mode keeps shell untrusted and
   grants only the worker agent's scoped write tools (ADR-002).
-- **Outbound redaction.** Diffs and file excerpts are filtered before
-  leaving the machine — file exclusion list, secret-pattern masking,
-  `--dry-run` payload preview, restricted-permission payload logs (design §7).
+- **Outbound redaction (bridge-built payloads only).** Diffs and file
+  excerpts that the bridge itself assembles are filtered before leaving the
+  machine — file exclusion list, secret-pattern masking, and a `--dry-run`
+  payload preview (design §7). This redaction covers **only** the
+  diff/excerpts the bridge builds; files Kiro reads directly through its own
+  tools do not pass through bridge redaction. Bridge permissions are a
+  Kiro-level tool-trust configuration, **not** an independent OS-level sandbox.
 - **Kiro output is treated as data, never as a command.** Review findings are
   always wrapped in a fixed trust boundary and schema-sanitized, and are never
   auto-applied. `task --write` is a separate, explicit execution mode that can

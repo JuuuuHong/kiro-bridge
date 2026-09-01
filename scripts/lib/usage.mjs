@@ -8,6 +8,21 @@ export function usagePath() {
   return join(bridgeHome(), 'usage.jsonl')
 }
 
+// ACP v1 usage cost is { amount: number, currency: ISO-4217 string } or null.
+// Reduce any input to a bounded { amount, currency } (or null): a finite amount
+// plus a 3-letter currency code, dropping arbitrary fields. A bare numeric cost
+// (legacy build) is tolerated as an amount with no currency.
+function normalizeAcpCost(cost) {
+  if (Number.isFinite(cost)) return { amount: cost, currency: null }
+  if (!cost || typeof cost !== 'object' || !Number.isFinite(cost.amount)) return null
+  let currency = null
+  if (typeof cost.currency === 'string') {
+    const code = cost.currency.trim().toUpperCase()
+    if (/^[A-Z]{3}$/.test(code)) currency = code
+  }
+  return { amount: cost.amount, currency }
+}
+
 export function recordUsage(entry) {
   const record = {
     at: new Date().toISOString(),
@@ -20,6 +35,21 @@ export function recordUsage(entry) {
     ok: entry.ok !== false,
     // Value from ACP metadata. null if absent — an instrumentation failure never blocks the call.
     contextUsagePercentage: entry.contextUsagePercentage ?? null,
+  }
+  // ACP structured usage accounting, when the transport surfaced it. Fields are
+  // only added when present so older readers/records stay backward compatible.
+  if (Number.isFinite(entry.acpUsed)) record.acpUsed = entry.acpUsed
+  if (Number.isFinite(entry.acpSize)) record.acpSize = entry.acpSize
+  // ACP v1 usage cost is { amount, currency } (currency optional, ISO-4217) —
+  // never a bare number. Persist the amount/currency separately, and only when
+  // valid, so nothing arbitrary lands in usage.jsonl. A legacy bare-number cost
+  // is tolerated as an amount with no currency. Old records that stored the
+  // (incorrect) numeric `acpCost` field remain readable — they are simply not
+  // written anymore.
+  const cost = normalizeAcpCost(entry.acpCost)
+  if (cost) {
+    record.acpCostAmount = cost.amount
+    if (cost.currency) record.acpCostCurrency = cost.currency
   }
   try {
     const target = usagePath()

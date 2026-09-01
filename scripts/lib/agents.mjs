@@ -5,7 +5,7 @@
 // `read, write, grep...` (OQ4). Rather than picking one, we probe both at
 // install time with `agent validate` and let whichever passes win — the
 // ambiguity resolves itself at runtime instead of being hardcoded.
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync, unlinkSync } from 'node:fs'
@@ -153,7 +153,7 @@ export function agentsDir() {
 
 function writeAtomic(target, contents) {
   mkdirSync(dirname(target), { recursive: true })
-  const tmp = `${target}.tmp.${process.pid}`
+  const tmp = `${target}.tmp.${process.pid}.${randomUUID()}`
   try {
     writeFileSync(tmp, contents, { mode: 0o600 })
     renameSync(tmp, target)

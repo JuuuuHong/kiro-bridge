@@ -8,6 +8,7 @@ import { parseResponse, wrapForClaude } from './findings.mjs'
 import { loadConfig } from './config.mjs'
 import * as transport from './transport/index.mjs'
 import { AGENT_PREFIX } from './agents.mjs'
+import { recordUsage } from './usage.mjs'
 
 export const DEFAULT_TIMEOUT_MS = 180_000 // design §8 failure mode table
 
@@ -84,13 +85,39 @@ export async function review(options = {}) {
   }
 
   const agent = `${AGENT_PREFIX}reviewer`
-  const res = await runFn(payload, {
-    cwd,
+  const startedAt = Date.now()
+  let res
+  try {
+    res = await runFn(payload, {
+      cwd,
+      agent,
+      timeoutMs,
+      onEvent,
+      onPermissionRequest,
+      signal,
+    })
+  } catch (err) {
+    // Failure metering mirrors runDelegated: a failed non-dry-run call is still
+    // a credit-spending attempt and must be recorded.
+    recordUsage({
+      command: 'review', agent, cwd, ok: false,
+      durationMs: Date.now() - startedAt,
+    })
+    throw err
+  }
+
+  // Success metering mirrors runDelegated, including structured ACP usage/cost
+  // and contextUsagePercentage when the transport surfaced them.
+  recordUsage({
+    command: 'review',
     agent,
-    timeoutMs,
-    onEvent,
-    onPermissionRequest,
-    signal,
+    transport: res.transport,
+    cwd,
+    durationMs: Date.now() - startedAt,
+    contextUsagePercentage: res.metadata?.contextUsagePercentage,
+    acpUsed: res.metadata?.usage?.used,
+    acpSize: res.metadata?.usage?.size,
+    acpCost: res.metadata?.usage?.cost,
   })
 
   const parsed = parseResponse(res.result)

@@ -4,10 +4,57 @@
 // and permission brokering. The core piece is mediating session/request_permission through Claude Code's judgment.
 import { spawn } from 'node:child_process'
 import { JsonRpcClient } from './jsonrpc.mjs'
-import { normalizeAcpUpdate, createCollector, EVENT_TYPES } from './events.mjs'
+import { normalizeAcpUpdate, normalizeKiroMetadata, createCollector, EVENT_TYPES } from './events.mjs'
 import { bridgeError, classifyOutput, CODES } from '../errors.mjs'
 
 export const PROTOCOL_VERSION = 1
+
+// Validates an initialize response against our expected protocol version.
+// Returns { ok, reason, agentCapabilities }. Never throws.
+export function validateInitialize(result) {
+  if (!result || typeof result !== 'object') {
+    return { ok: false, reason: 'initialize returned no result object' }
+  }
+  const pv = result.protocolVersion
+  if (pv !== PROTOCOL_VERSION) {
+    return {
+      ok: false,
+      reason: `protocolVersion mismatch: expected ${PROTOCOL_VERSION}, got ${pv === undefined ? 'undefined' : JSON.stringify(pv)}`,
+    }
+  }
+  const agentCapabilities =
+    result.agentCapabilities && typeof result.agentCapabilities === 'object' && !Array.isArray(result.agentCapabilities)
+      ? result.agentCapabilities
+      : {}
+  return { ok: true, agentCapabilities }
+}
+
+// Maps a prompt stopReason to a terminal disposition.
+// { ok: true } means the turn finished cleanly. Otherwise { code } carries the
+// BridgeError code to throw, with partial output attached by the caller.
+export function classifyStopReason(stopReason) {
+  switch (stopReason) {
+    case 'end_turn':
+      return { ok: true }
+    case 'max_tokens':
+    case 'max_turn_requests':
+      return { ok: false, code: CODES.INCOMPLETE, stopReason }
+    case 'refusal':
+      return { ok: false, code: CODES.REFUSED, stopReason }
+    case 'cancelled':
+      return { ok: false, code: CODES.CANCELLED, stopReason }
+    default:
+      return {
+        ok: false,
+        code: CODES.PROTOCOL,
+        stopReason,
+        reason:
+          stopReason == null
+            ? 'session/prompt returned no stopReason'
+            : `unknown stopReason: ${JSON.stringify(stopReason)}`,
+      }
+  }
+}
 
 function initializeParams() {
   return {
@@ -65,6 +112,10 @@ export async function probe({
   let forceKillTimer = null
   try {
     const result = await client.request('initialize', initializeParams())
+    const validation = validateInitialize(result)
+    if (!validation.ok) {
+      return { available: false, reason: validation.reason }
+    }
     return { available: true, initialize: result }
   } catch (err) {
     return { available: false, reason: String(err?.message || err) }
@@ -127,7 +178,17 @@ export async function run(payload, options = {}) {
       if (child.stdin.writable) child.stdin.write(s)
     },
     onNotification: (msg) => {
-      if (msg.method === 'session/update') emit(normalizeAcpUpdate(msg.params?.update))
+      if (msg.method !== 'session/update') return
+      const params = msg.params || {}
+      // Always preserve the normal, spec-shaped update event.
+      emit(normalizeAcpUpdate(params.update))
+      // Additionally emit a single bounded metadata event when a valid
+      // contextUsagePercentage is present — whether it arrived as the custom
+      // '_kiro.dev/metadata' update or attached as _meta on params/update.
+      // normalizeKiroMetadata returns at most one event, so there is never a
+      // duplicate metadata emission for the custom metadata update.
+      const metaEvent = normalizeKiroMetadata(params)
+      if (metaEvent) emit(metaEvent)
     },
     onRequest: async (msg) => {
       if (msg.method !== 'session/request_permission') return {}
@@ -177,9 +238,22 @@ export async function run(payload, options = {}) {
   if (signal?.aborted) onAbort()
 
   try {
-    await client.request('initialize', initializeParams())
+    const initResult = await client.request('initialize', initializeParams())
+    const validation = validateInitialize(initResult)
+    if (!validation.ok) {
+      throw bridgeError(CODES.PROTOCOL, { reason: validation.reason, details: initResult })
+    }
+    const agentCapabilities = validation.agentCapabilities
 
     if (sessionId) {
+      // Never silently create a contextless new session in place of a requested
+      // reuse. If the agent can't load sessions, fail clearly.
+      if (agentCapabilities.loadSession !== true) {
+        throw bridgeError(CODES.PROTOCOL, {
+          reason: 'session reuse requested but agent does not support session/load (agentCapabilities.loadSession !== true)',
+          sessionId,
+        })
+      }
       await client.request('session/load', { sessionId, cwd })
     } else {
       const created = await client.request('session/new', { cwd, mcpServers: [] })
@@ -200,8 +274,24 @@ export async function run(payload, options = {}) {
       throw bridgeError(CODES.TOOL_DENIED, { sessionId, denials: collector.denials })
     }
 
-    const classified = classifyOutput(`${collector.text}\n${stderr}`)
+    // Auth/throttle classification is driven strictly by process diagnostics
+    // (stderr), never by collector/model text — a clean successful agent
+    // message may legitimately contain phrases like "unauthorized" or "rate
+    // limit" and must not be misclassified as a failure (F1). Structural denial
+    // events above remain authoritative.
+    const classified = classifyOutput(stderr)
     if (classified) throw bridgeError(classified, { sessionId, stderr })
+
+    // Non-success stop reasons cannot be trusted as finished results.
+    const stop = classifyStopReason(promptResult?.stopReason)
+    if (!stop.ok) {
+      throw bridgeError(stop.code, {
+        sessionId,
+        stopReason: stop.stopReason,
+        partial: collector.text,
+        ...(stop.reason ? { reason: stop.reason } : {}),
+      })
+    }
 
     return {
       sessionId,

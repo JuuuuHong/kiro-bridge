@@ -13,7 +13,8 @@ import {
 import { collectDiff } from '../scripts/lib/git.mjs'
 import { TRUST_FENCE } from '../scripts/lib/findings.mjs'
 import { CODES, MESSAGES } from '../scripts/lib/errors.mjs'
-import { CONFIG_DEFAULTS } from '../scripts/lib/config.mjs'
+import { CONFIG_DEFAULTS, saveConfig, loadConfig } from '../scripts/lib/config.mjs'
+import { readUsage } from '../scripts/lib/usage.mjs'
 
 let home
 const originalHome = process.env.KIRO_BRIDGE_HOME
@@ -145,6 +146,57 @@ test('formatSummary: summarizes the severity distribution', async () => {
     runFn: async () => ({ transport: 'acp', sessionId: 's', result: OK_RESPONSE }),
   })
   assert.match(formatSummary(r), /high 1 \/ medium 0 \/ low 0/)
+})
+
+// --- F2: review usage metering ---
+
+test('review: a successful non-dry-run call records usage (mirroring runDelegated fields)', async () => {
+  await review({
+    collectDiffFn: fakeCollect,
+    runFn: async () => ({
+      transport: 'acp', sessionId: 's', result: OK_RESPONSE,
+      metadata: {
+        contextUsagePercentage: 44,
+        usage: { used: 9, size: 90, cost: { amount: 0.07, currency: 'USD' } },
+      },
+    }),
+  })
+  const rec = readUsage().find((u) => u.command === 'review')
+  assert.ok(rec, 'a review usage record is written')
+  assert.equal(rec.ok, true)
+  assert.equal(rec.transport, 'acp')
+  assert.equal(rec.agent, 'kiro-bridge-reviewer')
+  assert.equal(rec.contextUsagePercentage, 44)
+  assert.equal(rec.acpUsed, 9)
+  assert.equal(rec.acpSize, 90)
+  assert.equal(rec.acpCostAmount, 0.07)
+  assert.equal(rec.acpCostCurrency, 'USD')
+})
+
+test('review: a failed non-dry-run call still records usage as failed', async () => {
+  await assert.rejects(
+    review({
+      collectDiffFn: fakeCollect,
+      runFn: async () => { const e = new Error('denied'); e.code = CODES.TOOL_DENIED; throw e },
+    }),
+    (err) => err.code === CODES.TOOL_DENIED,
+  )
+  const rec = readUsage().find((u) => u.command === 'review')
+  assert.ok(rec, 'a failed review still records usage')
+  assert.equal(rec.ok, false)
+})
+
+test('review: dry-run does not record usage (no credit spent)', async () => {
+  await review({ collectDiffFn: fakeCollect, dryRun: true, config: CONFIG_DEFAULTS, runFn: async () => { throw new Error('must not call') } })
+  assert.equal(readUsage().filter((u) => u.command === 'review').length, 0)
+})
+
+test('review: an empty (no-change) review does not record usage', async () => {
+  await review({
+    collectDiffFn: async () => ({ diff: '\n', files: [], untracked: [], ref: 'HEAD' }),
+    runFn: async () => { throw new Error('must not call') },
+  })
+  assert.equal(readUsage().filter((u) => u.command === 'review').length, 0)
 })
 
 // --- agent definitions ---
@@ -396,6 +448,15 @@ test('agents: a managed older version is reported as updated', () => {
   writeFileSync(first.target, JSON.stringify(existing, null, 2))
   assert.equal(installAgent(rendered, { dir }).action, 'updated')
   rmSync(dir, { recursive: true, force: true })
+})
+
+// --- F6: atomic temp files use a unique suffix ---
+
+test('config: repeated saves in the same process never collide (unique temp suffix)', () => {
+  for (let i = 0; i < 20; i++) {
+    saveConfig({ ...CONFIG_DEFAULTS, logRetentionDays: i })
+  }
+  assert.equal(loadConfig().logRetentionDays, 19)
 })
 
 test('errors: throttled guidance points to the installed command namespace', () => {

@@ -12,6 +12,11 @@ export const CODES = {
   CANCELLED: 'CANCELLED',
   PROTOCOL: 'PROTOCOL',
   SPAWN_FAILED: 'SPAWN_FAILED',
+  // The turn ended before completing the goal (max_tokens / max_turn_requests).
+  // Any partial output cannot be trusted as a finished result.
+  INCOMPLETE: 'INCOMPLETE',
+  // The agent explicitly refused the request (stopReason: refusal).
+  REFUSED: 'REFUSED',
 }
 
 export class BridgeError extends Error {
@@ -74,6 +79,9 @@ export const MESSAGES = {
   [CODES.CANCELLED]: 'Cancelled.',
   [CODES.PROTOCOL]: 'Protocol exchange with kiro-cli did not match expectations.',
   [CODES.SPAWN_FAILED]: 'Failed to start the kiro-cli process.',
+  [CODES.INCOMPLETE]:
+    'Kiro stopped before finishing (token or turn limit). Partial output only; not a trustworthy result.',
+  [CODES.REFUSED]: 'Kiro refused the request. Partial output only.',
 }
 
 export function bridgeError(code, details = {}) {

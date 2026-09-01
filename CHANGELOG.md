@@ -5,6 +5,92 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Output classification uses diagnostics only.** Auth/throttle classification
+  on both the ACP and subprocess transports now reads process diagnostics
+  (`stderr`) exclusively, never collector/model text. A clean, successful agent
+  message that merely mentions phrases like `unauthorized`, `not logged in`,
+  `rate limit`, or `insufficient credits` no longer fails. Structural tool-denial
+  events remain authoritative.
+- **Review usage metering.** Non-dry-run `review` calls now record usage on both
+  success and failure, mirroring `runDelegated` (transport, duration, structured
+  ACP `used`/`size`/`cost`, and `contextUsagePercentage`). Dry-run and empty
+  (no-change) reviews record nothing.
+- **Bounded Kiro context metadata.** `contextUsagePercentage` is normalized from
+  all reasonable real ACP shapes — the custom `_kiro.dev/metadata` update,
+  `params._meta` (direct or nested `_kiro.dev/metadata`), and the `update._meta`
+  equivalents — accepting only a finite percentage in `0..100` and emitting a
+  `METADATA` event that carries **only** `contextUsagePercentage`. The ACP
+  notification handler preserves the normal update event and additionally emits
+  one bounded metadata event, with no duplicate for the custom metadata update.
+- **Metadata/state concurrency.** A synchronous, cross-process per-job lock
+  (atomic lock directory + unique owner token, bounded wait, stale-lock
+  recovery, always released in `finally`, no busy-spin) now serializes
+  read/decide/merge/write. `updateMeta` re-reads and merges under the lock and
+  accepts a static patch or an updater callback; `transition`, `reapOrphans`,
+  and `cancelJob` make their decision and state write under the same lock via
+  internal unlocked helpers so a worker transition cannot race a stale decision
+  (fail-closed cancellation preserved). `recordJobEvent` computes its
+  recent-events ring inside the locked updater, so concurrent field/event
+  writers no longer lose each other's changes.
+- **Queued false-reap.** After a successful spawn the parent persists the child
+  `pid`, best-effort process identity, and `spawnedAt` while the job is still
+  queued, using a lock-guarded updater that never clobbers a fast-starting
+  worker's own fields. `reapOrphans` uses the persisted queued PID: a live PID
+  past grace is left alone (worker starting), a live PID with a mismatched
+  identity is marked failed without signalling, and only queued+expired+no-live-PID
+  (including legacy null-PID records) becomes failed.
+- **Temp-file uniqueness.** Atomic temp files in `jobs.mjs`, `config.mjs`, and
+  `agents.mjs` now use a `PID + randomUUID` suffix so concurrent writers cannot
+  collide; failure cleanup is unchanged.
+- **Usage size alias.** Removed the unverified `usage_update.total` → `size`
+  alias. Only the official `used`/`size` fields and explicitly-supported
+  compatibility aliases (`usedTokens`/`contextUsed`, `contextSize`) populate
+  usage; an unrelated `total` no longer fills `size`.
+
+- **ACP protocol conformance.** `initialize` responses are now validated
+  against the expected protocol version in both probe (→ `available:false` on
+  mismatch/malformed) and run (→ `PROTOCOL` error with a specific reason).
+  Session reuse calls `session/load` only when the agent advertises
+  `agentCapabilities.loadSession`; otherwise it fails clearly instead of
+  silently creating a contextless new session.
+- **Prompt stopReason validation.** `end_turn` succeeds; `max_tokens` /
+  `max_turn_requests` now raise a new `INCOMPLETE` error, `refusal` a new
+  `REFUSED` error, `cancelled` maps to `CANCELLED`, and missing/unknown
+  reasons raise `PROTOCOL` — each carrying partial output rather than being
+  mistaken for a finished result.
+- **Atomic worker lifecycle.** Worker PID metadata and `queued → running` now
+  commit under one per-job lock, and startup exceptions are caught and recorded
+  through a bounded best-effort failure path. Successful result body, session
+  metadata, and `running → done` also commit under one lock, so cancellation
+  winning first leaves no late `result.txt` or completion metadata behind.
+- **PID identity safety.** Workers store a best-effort process start identity
+  (Linux `/proc/<pid>/stat`, macOS/BSD `ps lstart`) alongside the PID.
+  Cancellation fails closed when a live PID's identity is absent,
+  unverifiable, or mismatched (no signal, no transition), and orphan reaping
+  treats a live-but-mismatched PID as orphaned without killing it.
+- **Documentation contract.** Removed the false restricted-permission
+  payload-log claim from the READMEs, CHANGELOG, and design §7; clarified that
+  redaction covers only bridge-built payloads, that transmitted payloads are
+  not persisted, and that bridge permissions are not an OS-level sandbox.
+
+### Added
+
+- **ACP structured events.** `usage_update` and `plan` session updates are
+  normalized (`EVENT_TYPES.USAGE` / `PLAN`) and surfaced through collector
+  metadata (plan uses full-replacement semantics).
+- **Background observability.** Workers persist a bounded (≤20), sanitized
+  recent-event tail (type, timestamp, char counts, bounded tool
+  title/id/status, numeric usage, plan counts — no raw prose or ANSI/control
+  chars), track `lastProgressAt`, and record latest usage/plan metadata.
+  `status`/`formatStatus` classify running-job health
+  (`active`/`quiet`/`possibly_stalled`) and show a prose-free event tail.
+  `usage.jsonl` records gain optional ACP `used`/`size`/`cost` fields
+  (backward compatible).
+
 ## [0.1.0] - 2026-09-01
 
 ### Added
@@ -20,7 +106,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/kiro-bridge:review` — structured diff/context handoff to a read-trusted
   reviewer agent, returning severity-tagged findings JSON.
 - Outbound redaction (`context.mjs`): file exclusion list, secret-pattern
-  masking, `--dry-run` payload preview, restricted-permission payload logs.
+  masking, and a `--dry-run` payload preview. Redaction covers only the
+  bridge-built diff/excerpts; transmitted payloads are not persisted (no
+  payload audit log).
 - Trust-boundary wrapping and schema sanitization for all Kiro output
   (`findings.mjs`), applied regardless of parse success or failure.
 - Tool-denial detection so a silently-denied tool call escalates to an
@@ -33,8 +121,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or as a background job (`--bg`), with a read-only researcher agent by
   default and a scoped write-permitted worker agent via `--write`.
 - Background job lifecycle: cwd-scoped job directories, atomic state
-  transitions (`queued → running → done | failed | cancelled`), PID+start-time
-  guarded cancellation, 30-day GC.
+  transitions (`queued → running → done | failed | cancelled`), PID-guarded
+  cancellation, 30-day GC.
 - `/kiro-bridge:result` — retrieve job output, with `--follow-up` continuing
   an existing ACP session via `session/load`.
 - `/kiro-bridge:status` / `/kiro-bridge:cancel` — job listing with
@@ -48,4 +136,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   permission spec.
 - Test suite grown to 119 tests.
 
+[Unreleased]: https://github.com/JuuuuHong/kiro-bridge/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/JuuuuHong/kiro-bridge/releases/tag/v0.1.0

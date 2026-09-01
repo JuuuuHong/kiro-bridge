@@ -151,7 +151,11 @@ Request payload (Claude → Kiro, stdin):
 Since Kiro can read files itself via the `read`/`grep` tools, `files.excerpt`
 is kept to entry-point-level guidance rather than full inclusion (to avoid
 context displacement). The `contextUsagePercentage` from ACP's
-`_kiro.dev/metadata` is used to warn against over-stuffing the payload.
+`_kiro.dev/metadata` is used to warn against over-stuffing the payload. It is
+collected via bounded normalization from all reasonable notification shapes
+(the custom `_kiro.dev/metadata` update, `params._meta`, and `update._meta`,
+direct or nested) and only a finite percentage in `0..100` is accepted — no
+other `_meta` fields are ever persisted.
 
 Response contract (Kiro → Claude, required via agent prompt, best-effort):
 
@@ -189,12 +193,18 @@ Response contract (Kiro → Claude, required via agent prompt, best-effort):
 ## 7. Outbound defense (redaction)
 
 Since diffs, excerpts, and test output are transmitted to AWS, `context.mjs`
-has a pre-send stage:
+has a pre-send stage. This redaction applies **only to the diff/excerpts the
+bridge itself builds** — files Kiro reads directly via its own `read`/`grep`
+tools never pass through this stage. Bridge permissions are a Kiro-level
+tool-trust configuration, not an independent OS-level sandbox.
 
 - File exclusion list: `.env*`, `*.pem`, `*credentials*`, `*.key`, etc.
 - Pattern masking: AWS access keys, high-entropy strings, private hostnames (configurable).
-- `--dry-run`: lets a human review the payload right before it's sent.
-- Transmitted payload logs (`~/.kiro-bridge/`) get 0600 permissions + a configurable retention period.
+- `--dry-run`: previews the payload right before it's sent; nothing is transmitted.
+- **Transmitted payloads are not persisted.** There is no payload audit log.
+  Job, usage, and config state under `~/.kiro-bridge/` is written `0600`
+  (dirs `0700`); the retention period (30-day GC) applies to **jobs**, not to
+  any payload audit log.
 
 ## 8. Failure modes and job lifecycle
 
@@ -203,7 +213,7 @@ has a pre-send stage:
 | Failure | Detection | Shown to user | Retry |
 |---|---|---|---|
 | Timeout | Per-command default (review 180s, task 600s), `--timeout` | Partial output + timeout explicitly noted | No |
-| Unauthenticated | `kiro-cli whoami` fails | Guidance to run `kiro-cli login` | No |
+| Unauthenticated | stderr/output pattern classification (`classifyOutput`) | Guidance to run `kiro-cli login` | No |
 | Credit/throttling | Error pattern matching | Exhaustion notice + usage display | No |
 | **Tool denial** | Detect `[denied]` in output/events | Findings trust revoked, escalated to "insufficient permission" error | No |
 | Parse failure | JSON extraction fails | Raw text returned + structuring-failure indicator shown | No |
@@ -222,7 +232,37 @@ in the transport layer.
 - State transitions: `queued → running → done | failed | cancelled`. State
   writes are atomic via temp-file + rename.
 - Background runs are `detached + unref`, with stdio redirected to files.
-- Cancellation guards against PID reuse by matching job-id → PID + start time before killing (or `session/cancel` for ACP).
+- Cancellation guards against PID reuse by storing a **best-effort process
+  start identity** in job metadata when the worker starts (Linux
+  `/proc/<pid>/stat` start ticks; macOS/BSD `ps -o lstart`) alongside the PID.
+  `cancelJob` sends SIGTERM only when a live PID's stored identity is present
+  and still matches; if the identity is absent, unverifiable on the platform,
+  or mismatched, it **fails closed** (no signal, no state transition) rather
+  than risk killing an unrelated reused-PID process. A dead process may
+  transition to `cancelled` without any signal. `reapOrphans` treats a live
+  PID whose stored identity no longer matches as orphaned (marked `failed`)
+  without signalling it. (For ACP, in-session cancellation uses
+  `session/cancel`.)
+- **Queued PID ownership.** On a successful spawn the parent persists the child
+  PID, best-effort process identity, and `spawnedAt` while the job is still
+  queued, and the worker reasserts its own PID/identity before flipping
+  `queued → running`. `reapOrphans` uses the persisted queued PID so a worker
+  that spawned but has not yet reached `running` is not falsely reaped: a live
+  queued PID past the startup grace is left alone, a live PID with a mismatched
+  identity is marked `failed` without signalling, and only a
+  queued-and-expired-and-no-live-PID record (including legacy records with a
+  null PID) becomes `failed`.
+- **Per-job locking.** All read/decide/merge/write sequences over a job's
+  `meta.json`/`status` run under a synchronous, cross-process per-job lock
+  (atomic lock directory + unique owner token, bounded wait, stale-lock
+  recovery). This serializes worker transitions, parent queued writes,
+  event recording, reaping, and cancellation so no metadata field or state
+  decision is lost or raced. Worker PID metadata + `queued → running` and
+  result/session metadata + `running → done` are each one locked lifecycle
+  operation; if cancellation reaches a terminal state first, the worker does
+  not persist a late result body or completion metadata. Startup exceptions
+  use the same atomic failure path, with orphan reaping as the fallback when a
+  contended lock cannot be reacquired immediately.
 - 30-day GC after completion. The SessionEnd hook only cleans up orphan
   processes and preserves job results.
 - `sessionId` is stored in job metadata → `/kiro-bridge:result --follow-up`

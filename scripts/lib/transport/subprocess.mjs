@@ -127,7 +127,12 @@ export async function run(payload, options = {}) {
     })
   }
 
-  const classified = classifyOutput(`${collector.text}\n${stderr}`)
+  // Auth/throttle classification is driven strictly by process diagnostics
+  // (stderr), never by collector/model text — a clean successful agent message
+  // may legitimately contain phrases like "unauthorized" or "rate limit" and
+  // must not be misclassified (F1). Structural denial events below remain
+  // authoritative.
+  const classified = classifyOutput(stderr)
   if (classified) throw bridgeError(classified, { stderr, exitCode })
 
   if (collector.denied) {

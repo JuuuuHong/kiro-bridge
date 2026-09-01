@@ -2,6 +2,7 @@
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 
 const DEFAULTS = {
   version: 1,
@@ -45,7 +46,7 @@ export function loadConfig() {
 export function saveConfig(config) {
   const target = configPath()
   mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
-  const tmp = `${target}.tmp.${process.pid}`
+  const tmp = `${target}.tmp.${process.pid}.${randomUUID()}`
   try {
     writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 })
     renameSync(tmp, target)
