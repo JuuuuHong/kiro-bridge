@@ -13,10 +13,10 @@ import { BridgeError } from './lib/errors.mjs'
 const USAGE = `kiro-bridge
 
   bridge.mjs setup  [--force]
-  bridge.mjs review [ref]    [--dry-run] [--timeout <ms>] [--quiet]
+  bridge.mjs review [ref]    [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
   bridge.mjs task   <goal>   [--bg] [--write] [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
   bridge.mjs spec   <goal>   [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
-  bridge.mjs result [job-id] [--follow-up <question>] [--timeout <ms>] [--quiet]
+  bridge.mjs result [job-id] [--follow-up <question>] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
   bridge.mjs status
   bridge.mjs cancel <job-id>
 
@@ -38,10 +38,10 @@ const FLAG_NAMES = {
 
 const ALLOWED_FLAGS = {
   setup: new Set(['force']),
-  review: new Set(['dryRun', 'timeoutMs', 'quiet']),
+  review: new Set(['dryRun', 'model', 'effort', 'timeoutMs', 'quiet']),
   task: new Set(['background', 'write', 'dryRun', 'model', 'effort', 'timeoutMs', 'quiet']),
   spec: new Set(['dryRun', 'model', 'effort', 'timeoutMs', 'quiet']),
-  result: new Set(['followUp', 'timeoutMs', 'quiet']),
+  result: new Set(['followUp', 'model', 'effort', 'timeoutMs', 'quiet']),
   status: new Set(),
   cancel: new Set(),
   _worker: new Set(),
@@ -62,6 +62,12 @@ export function validateCommandFlags(command, flags) {
     if (flags[key] !== undefined && !allowed.has(key)) {
       throw new Error(`${FLAG_NAMES[key]} is not supported by ${command}`)
     }
+  }
+  if (command === 'result' && !flags.followUp && (
+    flags.model !== undefined || flags.effort !== undefined
+    || flags.timeoutMs !== undefined || flags.quiet !== undefined
+  )) {
+    throw new Error('--model, --effort, --timeout, and --quiet on result require --follow-up')
   }
 }
 
@@ -134,6 +140,8 @@ async function main(argv) {
     const res = await review({
       ref: flags._[0] || null,
       dryRun: flags.dryRun,
+      model: flags.model,
+      effort: flags.effort,
       timeoutMs: flags.timeoutMs,
       onEvent: makeReporter(flags.quiet),
     })
@@ -173,6 +181,8 @@ async function main(argv) {
     const res = await result({
       jobId: flags._[0] || null,
       followUp: flags.followUp,
+      model: flags.model,
+      effort: flags.effort,
       timeoutMs: flags.timeoutMs,
       onEvent: makeReporter(flags.quiet),
     })

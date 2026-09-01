@@ -116,10 +116,10 @@ Capability detection results are cached in `~/.kiro-bridge/config.json`, keyed b
 | Command | Phase | Behavior | Default agent/permission | Default model/effort |
 |---|---|---|---|---|
 | `/kiro-bridge:setup` | 1 | Verify install/login, install agents + `agent validate` | - | - |
-| `/kiro-bridge:review [ref]` | 1 | diff context → findings | reviewer (read-trusted) | sonnet family / medium |
+| `/kiro-bridge:review [ref]` | 1 | diff context → findings | reviewer (read-trusted) | auto; `--model` / `--effort` override |
 | `/kiro-bridge:task <description> [--bg] [--write]` | 2 | Delegate a task | read-only by default / `--write`→scoped agent | auto |
 | `/kiro-bridge:spec <feature>` | 2 | Native spec mode → `.kiro/specs/` | spec-writer | higher-tier model / high |
-| `/kiro-bridge:result [id] [--follow-up <question>]` | 2 | Retrieve job result, continue session with follow-up | - | - |
+| `/kiro-bridge:result [id] [--follow-up <question>]` | 2 | Retrieve job result, continue session with follow-up | original task agent | follow-up accepts `--model` / `--effort` override |
 | `/kiro-bridge:status` / `/kiro-bridge:cancel` | 2 | Job list & accumulated credits / cancel | - | - |
 
 - Command namespace is the **plugin name** (`plugin.json`'s `name`). The

@@ -54,10 +54,10 @@ and Kiro's capabilities.
 | Command | Phase | Description |
 |---|---|---|
 | `/kiro-bridge:setup` | 1 | Verify install/auth and install the bundled Kiro agents |
-| `/kiro-bridge:review [ref]` | 1 | Have Kiro review the current diff and return structured findings |
+| `/kiro-bridge:review [ref] [--model <id>] [--effort <lv>]` | 1 | Have Kiro review the current diff and return structured findings |
 | `/kiro-bridge:task <goal> [--bg] [--write]` | 2 | Delegate investigation or debugging to Kiro, foreground or background |
 | `/kiro-bridge:spec <feature>` | 2 | Use Kiro's native spec mode to generate requirements/design under `.kiro/specs/` |
-| `/kiro-bridge:result [job-id] [--follow-up]` | 2 | Retrieve a background job's result, optionally continuing the session |
+| `/kiro-bridge:result [job-id] [--follow-up] [--model <id>] [--effort <lv>]` | 2 | Retrieve a background job's result, optionally continuing the session |
 | `/kiro-bridge:status` | 2 | List jobs for this repo and show accumulated usage |
 | `/kiro-bridge:cancel <job-id>` | 2 | Cancel a running background job |
 

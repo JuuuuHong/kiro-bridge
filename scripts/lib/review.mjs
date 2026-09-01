@@ -24,6 +24,8 @@ export async function review(options = {}) {
     goal = 'Review this diff and report defects as findings JSON.',
     dryRun = false,
     timeoutMs = DEFAULT_TIMEOUT_MS,
+    model,
+    effort,
     onEvent,
     onPermissionRequest,
     signal,
@@ -92,6 +94,8 @@ export async function review(options = {}) {
       cwd,
       agent,
       timeoutMs,
+      model,
+      effort,
       onEvent,
       onPermissionRequest,
       signal,
@@ -100,7 +104,7 @@ export async function review(options = {}) {
     // Failure metering mirrors runDelegated: a failed non-dry-run call is still
     // a credit-spending attempt and must be recorded.
     recordUsage({
-      command: 'review', agent, cwd, ok: false,
+      command: 'review', agent, model, cwd, ok: false,
       durationMs: Date.now() - startedAt,
     })
     throw err
@@ -111,6 +115,7 @@ export async function review(options = {}) {
   recordUsage({
     command: 'review',
     agent,
+    model,
     transport: res.transport,
     cwd,
     durationMs: Date.now() - startedAt,

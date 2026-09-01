@@ -51,10 +51,10 @@ kiro-bridge는 Kiro 자체의 툴 신뢰 모델, 커스텀 에이전트, spec/pl
 | 커맨드 | Phase | 설명 |
 |---|---|---|
 | `/kiro-bridge:setup` | 1 | 설치·인증 확인 후 번들 Kiro 에이전트 설치 |
-| `/kiro-bridge:review [ref]` | 1 | 현재 diff를 Kiro가 리뷰하고 구조화 findings 반환 |
+| `/kiro-bridge:review [ref] [--model <id>] [--effort <lv>]` | 1 | 현재 diff를 Kiro가 리뷰하고 구조화 findings 반환 |
 | `/kiro-bridge:task <목표> [--bg] [--write]` | 2 | 조사·디버깅을 Kiro에 위임 (foreground 또는 background) |
 | `/kiro-bridge:spec <기능>` | 2 | Kiro 네이티브 spec 모드로 `.kiro/specs/`에 requirements/design 생성 |
-| `/kiro-bridge:result [job-id] [--follow-up]` | 2 | 백그라운드 잡 결과 회수, 세션 이어서 후속 질문 가능 |
+| `/kiro-bridge:result [job-id] [--follow-up] [--model <id>] [--effort <lv>]` | 2 | 백그라운드 잡 결과 회수, 세션 이어서 후속 질문 가능 |
 | `/kiro-bridge:status` | 2 | 이 저장소의 잡 목록과 누적 사용량 표시 |
 | `/kiro-bridge:cancel <job-id>` | 2 | 실행 중인 백그라운드 잡 취소 |
 

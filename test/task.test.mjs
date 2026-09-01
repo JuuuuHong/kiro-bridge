@@ -99,6 +99,8 @@ test('task --bg: creates a job and spawns the worker detached', async () => {
   const bg = await task({
     goal: 'background investigation',
     background: true,
+    model: 'model-x',
+    effort: 'high',
     cwd: CWD,
     spawnFn: (cmd, args, opts) => {
       spawned.push({ cmd, args, opts })
@@ -111,6 +113,8 @@ test('task --bg: creates a job and spawns the worker detached', async () => {
   assert.equal(spawned[0].args[2], bg.jobId)
   assert.equal(spawned[0].opts.detached, true)
   const job = jobs.readJob(bg.jobId, CWD)
+  assert.equal(job.meta.payloadOptions.model, 'model-x')
+  assert.equal(job.meta.payloadOptions.effort, 'high')
   // F5: the parent persists the spawned child's pid + spawnedAt while the job
   // is still queued, so reapOrphans can distinguish "spawned, not yet running"
   // from "never started". The job stays queued until the worker flips it.
@@ -122,9 +126,19 @@ test('task --bg: creates a job and spawns the worker detached', async () => {
 
 test('runWorker: on success, saves the result + done, keeps sessionId', async () => {
   const { jobId } = jobs.createJob({
-    cwd: CWD, command: 'task', payloadOptions: { goal: 'g', write: false },
+    cwd: CWD, command: 'task',
+    payloadOptions: { goal: 'g', write: false, model: 'model-x', effort: 'high' },
   })
-  await runWorker(jobId, { cwd: CWD, runFn: okRun() })
+  let workerOptions
+  await runWorker(jobId, {
+    cwd: CWD,
+    runFn: async (payload, options) => {
+      workerOptions = options
+      return okRun()(payload, options)
+    },
+  })
+  assert.equal(workerOptions.model, 'model-x')
+  assert.equal(workerOptions.effort, 'high')
   const job = jobs.readJob(jobId, CWD)
   assert.equal(job.status, 'done')
   assert.equal(job.meta.sessionId, 'sess-1')
@@ -195,9 +209,13 @@ test('result --follow-up: reuses the session via sessionId', async () => {
     cwd: CWD,
     jobId,
     followUp: 'give me more evidence',
+    model: 'model-x',
+    effort: 'high',
     runFn: async (payload, options) => { seen = { payload, options }; return okRun()(payload, options) },
   })
   assert.equal(seen.options.sessionId, 'sess-1')
+  assert.equal(seen.options.model, 'model-x')
+  assert.equal(seen.options.effort, 'high')
   assert.equal(seen.payload.goal, 'give me more evidence')
   assert.ok(res.followUp.wrapped.includes(TRUST_FENCE.open))
 })
@@ -210,6 +228,7 @@ test('result --follow-up: records ACP usage/context fields into usage.jsonl (lik
     cwd: CWD,
     jobId,
     followUp: 'give me more evidence',
+    model: 'model-x',
     runFn: okRun({
       metadata: {
         contextUsagePercentage: 33,
@@ -219,11 +238,32 @@ test('result --follow-up: records ACP usage/context fields into usage.jsonl (lik
   })
   const followUpUsage = readUsage().find((u) => u.command === 'result:follow-up')
   assert.ok(followUpUsage, 'a result:follow-up usage record is written')
+  assert.equal(followUpUsage.model, 'model-x')
   assert.equal(followUpUsage.contextUsagePercentage, 33)
   assert.equal(followUpUsage.acpUsed, 11)
   assert.equal(followUpUsage.acpSize, 22)
   assert.equal(followUpUsage.acpCostAmount, 0.05)
   assert.equal(followUpUsage.acpCostCurrency, 'USD')
+})
+
+test('result --follow-up: a failed delegated call records failed usage with model', async () => {
+  const { jobId } = jobs.createJob({ cwd: CWD, command: 'task', payloadOptions: { goal: 'g' } })
+  await runWorker(jobId, { cwd: CWD, runFn: okRun() })
+
+  await assert.rejects(
+    () => result({
+      cwd: CWD,
+      jobId,
+      followUp: 'give me more evidence',
+      model: 'model-x',
+      runFn: async () => { throw new Error('follow-up failed') },
+    }),
+    /follow-up failed/,
+  )
+  const followUpUsage = readUsage().find((u) => u.command === 'result:follow-up')
+  assert.ok(followUpUsage, 'a failed result:follow-up usage record is written')
+  assert.equal(followUpUsage.ok, false)
+  assert.equal(followUpUsage.model, 'model-x')
 })
 
 test('result --follow-up: a clear error for a job with no session (subprocess)', async () => {

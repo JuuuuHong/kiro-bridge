@@ -253,7 +253,7 @@ export async function runWorker(jobId, { cwd = process.cwd(), runFn } = {}) {
 
 // /kiro:result — retrieve results. --follow-up continues the session using the saved sessionId.
 export async function result(options = {}) {
-  const { jobId: requested, cwd = process.cwd(), followUp, runFn = transport.run, ...rest } = options
+  const { jobId: requested, cwd = process.cwd(), followUp, model, effort, runFn = transport.run, ...rest } = options
   jobs.reapOrphans(cwd)
 
   const jobId = requested || jobs.latestJobId(cwd)
@@ -280,17 +280,28 @@ export async function result(options = {}) {
   const { payload } = buildTaskPayload({ goal: followUp, config })
 
   const startedAt = Date.now()
-  const res = await runFn(payload, {
-    cwd,
-    agent: agentDef.name,
-    sessionId: job.meta.sessionId,
-    timeoutMs: rest.timeoutMs || DEFAULT_TIMEOUT_MS,
-    onEvent: rest.onEvent,
-    onPermissionRequest: rest.onPermissionRequest,
-    signal: rest.signal,
-  })
+  let res
+  try {
+    res = await runFn(payload, {
+      cwd,
+      agent: agentDef.name,
+      sessionId: job.meta.sessionId,
+      timeoutMs: rest.timeoutMs || DEFAULT_TIMEOUT_MS,
+      model,
+      effort,
+      onEvent: rest.onEvent,
+      onPermissionRequest: rest.onPermissionRequest,
+      signal: rest.signal,
+    })
+  } catch (err) {
+    recordUsage({
+      command: 'result:follow-up', agent: agentDef.name, model, cwd, ok: false,
+      durationMs: Date.now() - startedAt,
+    })
+    throw err
+  }
   recordUsage({
-    command: 'result:follow-up', agent: agentDef.name, transport: res.transport,
+    command: 'result:follow-up', agent: agentDef.name, model, transport: res.transport,
     cwd, durationMs: Date.now() - startedAt,
     contextUsagePercentage: res.metadata?.contextUsagePercentage,
     acpUsed: res.metadata?.usage?.used,

@@ -1,6 +1,6 @@
 ---
 description: Retrieve the result of a background job. --follow-up continues the session for a follow-up question
-argument-hint: "[job-id] [--follow-up <question>] [--timeout <ms>] [--quiet]"
+argument-hint: "[job-id] [--follow-up <question>] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]"
 ---
 
 Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" result $ARGUMENTS`.
@@ -9,3 +9,6 @@ Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" result $ARGUMENTS`.
 - If it's still `running`, report that as-is and wait. Do not poll repeatedly.
 - `--follow-up` only works on jobs with a surviving ACP session. If it errors
   saying no session exists, guide the user toward a new `/kiro-bridge:task`.
+- `--model <id>` and `--effort <lv>` override Kiro for the follow-up call.
+  These flags, `--timeout`, and `--quiet` require `--follow-up`; plain result
+  retrieval is immediate and accepts none of these execution-only options.

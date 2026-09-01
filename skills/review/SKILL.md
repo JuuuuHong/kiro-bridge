@@ -1,7 +1,7 @@
 ---
 name: review
 description: Have Kiro CLI review the current diff and return structured findings. Use this when Claude wants a second opinion after finishing a task, or when the user asks to "have kiro review this."
-argument-hint: "[ref] [--dry-run] [--timeout <ms>] [--quiet]"
+argument-hint: "[ref] [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]"
 ---
 
 # kiro-bridge:review
@@ -21,6 +21,8 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" review [ref] [flags]
 |---|---|
 | `ref` | Comparison base. Defaults to `HEAD` (staged + unstaged + untracked) |
 | `--dry-run` | Print the payload without sending it. **Try this first on a repo you haven't used before** |
+| `--model <id>` | Override the Kiro model for this review |
+| `--effort <lv>` | Override effort (`low`, `medium`, `high`, `xhigh`, or `max`) |
 | `--timeout <ms>` | Default 180000 |
 | `--quiet` | Suppress progress output (stderr) |
 

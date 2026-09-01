@@ -49,10 +49,12 @@ const OK_RESPONSE = JSON.stringify({
 // --- argument parsing ---
 
 test('parseArgs: separates flags from positional args', () => {
-  const { command, flags } = parseArgs(['review', 'main', '--dry-run', '--timeout', '500'])
+  const { command, flags } = parseArgs(['review', 'main', '--dry-run', '--model', 'model-x', '--effort', 'high', '--timeout', '500'])
   assert.equal(command, 'review')
   assert.deepEqual(flags._, ['main'])
   assert.equal(flags.dryRun, true)
+  assert.equal(flags.model, 'model-x')
+  assert.equal(flags.effort, 'high')
   assert.equal(flags.timeoutMs, 500)
 })
 
@@ -88,10 +90,14 @@ test('review: calls out with the reviewer agent specified', async () => {
   let opts = null
   await review({
     collectDiffFn: fakeCollect,
+    model: 'model-x',
+    effort: 'high',
     runFn: async (_p, o) => { opts = o; return { transport: 'acp', sessionId: 's1', result: OK_RESPONSE } },
   })
   assert.equal(opts.agent, 'kiro-bridge-reviewer')
   assert.equal(opts.timeoutMs, 180_000)
+  assert.equal(opts.model, 'model-x')
+  assert.equal(opts.effort, 'high')
 })
 
 test('review: the result always comes back wrapped in the trust boundary (ADR-004)', async () => {
@@ -153,6 +159,7 @@ test('formatSummary: summarizes the severity distribution', async () => {
 test('review: a successful non-dry-run call records usage (mirroring runDelegated fields)', async () => {
   await review({
     collectDiffFn: fakeCollect,
+    model: 'model-x',
     runFn: async () => ({
       transport: 'acp', sessionId: 's', result: OK_RESPONSE,
       metadata: {
@@ -166,6 +173,7 @@ test('review: a successful non-dry-run call records usage (mirroring runDelegate
   assert.equal(rec.ok, true)
   assert.equal(rec.transport, 'acp')
   assert.equal(rec.agent, 'kiro-bridge-reviewer')
+  assert.equal(rec.model, 'model-x')
   assert.equal(rec.contextUsagePercentage, 44)
   assert.equal(rec.acpUsed, 9)
   assert.equal(rec.acpSize, 90)
@@ -432,9 +440,27 @@ test('parseArgs: rejects a missing value for model and follow-up', () => {
   assert.throws(() => parseArgs(['result', '--follow-up', '--quiet']), /requires .*value/)
 })
 
-test('validateCommandFlags: rejects flags silently ignored by a subcommand', () => {
-  const reviewArgs = parseArgs(['review', '--model', 'x'])
-  assert.throws(() => validateCommandFlags(reviewArgs.command, reviewArgs.flags), /not supported by review/)
+test('validateCommandFlags: model overrides are limited to delegated commands', () => {
+  for (const argv of [
+    ['review', '--model', 'x', '--effort', 'high'],
+    ['task', 'goal', '--model', 'x'],
+    ['spec', 'goal', '--effort', 'high'],
+    ['result', 'job', '--follow-up', 'q', '--model', 'x', '--effort', 'high'],
+  ]) {
+    const parsed = parseArgs(argv)
+    assert.doesNotThrow(() => validateCommandFlags(parsed.command, parsed.flags))
+  }
+  const setupArgs = parseArgs(['setup', '--model', 'x'])
+  assert.throws(() => validateCommandFlags(setupArgs.command, setupArgs.flags), /not supported by setup/)
+  for (const argv of [
+    ['result', 'job', '--model', 'x'],
+    ['result', 'job', '--effort', 'high'],
+    ['result', 'job', '--timeout', '1000'],
+    ['result', 'job', '--quiet'],
+  ]) {
+    const parsed = parseArgs(argv)
+    assert.throws(() => validateCommandFlags(parsed.command, parsed.flags), /require --follow-up/)
+  }
   const statusArgs = parseArgs(['status', '--quiet'])
   assert.throws(() => validateCommandFlags(statusArgs.command, statusArgs.flags), /not supported by status/)
 })

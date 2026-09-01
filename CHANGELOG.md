@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-01
+
+### Added
+
+- **Kiro model selection across delegated calls.** `review` and
+  `result --follow-up` now accept `--model <id>` and `--effort <lv>`, matching
+  the existing `task` and `spec` overrides. The selected model is forwarded to
+  both transports and recorded in usage metering; result-only retrieval rejects
+  these flags unless `--follow-up` is present.
+
+## [0.1.1] - 2026-09-01
+
 ### Fixed
 
 - **Plugin command deduplication.** Removed the four legacy flat command files
@@ -142,5 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   permission spec.
 - Test suite grown to 119 tests.
 
-[Unreleased]: https://github.com/JuuuuHong/kiro-bridge/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/JuuuuHong/kiro-bridge/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/JuuuuHong/kiro-bridge/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/JuuuuHong/kiro-bridge/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/JuuuuHong/kiro-bridge/releases/tag/v0.1.0
