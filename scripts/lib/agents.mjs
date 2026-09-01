@@ -125,6 +125,24 @@ export const AGENT_DEFS = {
   },
 }
 
+// Reverse index: full agent name → definition. Built once from the static
+// AGENT_DEFS so a persisted agent name (e.g. from a session record) can be
+// resolved back to its definition without trusting arbitrary input as an
+// object key. Only the fixed, known names ever resolve; anything else → null.
+const AGENT_DEFS_BY_NAME = Object.freeze(
+  Object.fromEntries(Object.values(AGENT_DEFS).map((def) => [def.name, def])),
+)
+
+// Safe lookup of an agent definition by its full name. Returns null for any
+// unknown/untrusted name so a hand-edited session record can never select an
+// out-of-catalog agent or reach a prototype key.
+export function agentDefByName(name) {
+  if (typeof name !== 'string') return null
+  return Object.prototype.hasOwnProperty.call(AGENT_DEFS_BY_NAME, name)
+    ? AGENT_DEFS_BY_NAME[name]
+    : null
+}
+
 export function renderAgent(def, toolSet) {
   const names = TOOL_NAME_SETS[toolSet]
   if (!names) throw new Error(`unknown tool name set: ${toolSet}`)

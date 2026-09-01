@@ -120,6 +120,7 @@ Capability detection results are cached in `~/.kiro-bridge/config.json`, keyed b
 | `/kiro-bridge:task <description> [--bg] [--write]` | 2 | Delegate a task | read-only by default / `--write`→scoped agent | auto |
 | `/kiro-bridge:spec <feature>` | 2 | Native spec mode → `.kiro/specs/` | spec-writer | higher-tier model / high |
 | `/kiro-bridge:result [id] [--follow-up <question>]` | 2 | Retrieve job result, continue session with follow-up | original task agent | follow-up accepts `--model` / `--effort` override |
+| `/kiro-bridge:resume <question> [--session <id>]` | 3 | Continue any recorded resumable ACP session (§12) | original session's agent + write class | latest by default; `--model` / `--effort` override |
 | `/kiro-bridge:status` / `/kiro-bridge:cancel` | 2 | Job list & accumulated credits / cancel | - | - |
 
 - Command namespace is the **plugin name** (`plugin.json`'s `name`). The
@@ -333,3 +334,103 @@ since ACP always wins, verifying the fallback requires explicitly forcing
 - ACP transport is replay-tested against recorded JSON-RPC round-trip fixtures.
 - Integration tests only run as an opt-in layer, and only when a real kiro-cli is present.
 - Redaction is validated against secret-sample fixtures, both positive and negative cases.
+
+## 12. Hardening & resume additions (0.2.0)
+
+These are focused additions on top of the architecture above; §1–§11 stand.
+
+### 12.1 Child-environment trust boundary (`env.mjs`, extends §7)
+
+Outbound redaction (§7) covers payload *contents*, but the child process also
+inherits an *environment*, which is a second exfiltration and injection surface.
+Every kiro-cli spawn/exec now builds an **explicit allowlisted environment**
+instead of passing `process.env`.
+
+- **Default allow** (exact names + prefixes): `PATH`, `HOME`, `USER`,
+  `LOGNAME`, `SHELL`, `TERM`, temp dir (`TMPDIR`/`TMP`/`TEMP`), locale
+  (`LANG`/`LANGUAGE` + the `LC_*` prefix), proxy vars (upper/lower case), CA
+  bundle / TLS trust vars, `KIRO_AGENTS_DIR`, and the `XDG_` prefix.
+- **Hard deny** (always wins, even over a passthrough entry): AWS credential
+  and token variables and the container/IMDS credential endpoints,
+  `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`, `NPM_TOKEN`,
+  `SSH_AUTH_SOCK`, `NODE_OPTIONS`, `FORCE_COLOR`, and npm config injection
+  (`npm_` prefix, `NPM_CONFIG_` prefix). Deny entries ending in `_` match as
+  prefixes.
+- **Never forwarded**: `KIRO_BRIDGE_HOME` (an internal override) and an
+  inherited `PWD` are not on the allowlist, so they cannot leak or be used to
+  redirect state. `NO_COLOR=1` is always set on the child (defense in depth for
+  §12.2, not a substitute for it).
+- **`config.envPassthrough`** is an exact-name, no-wildcard opt-in. It merges
+  into the allow set so a user can forward a non-secret selector such as
+  `AWS_PROFILE` or `AWS_REGION`, but the hard-deny floor is applied last, so a
+  passthrough entry can never re-introduce a credential variable. Precedence:
+  **deny > (exact-allow | prefix-allow | passthrough)**, and the value must be a
+  string present in the source environment.
+
+### 12.2 Output sanitization (`sanitize.mjs`, extends ADR-004)
+
+ADR-004 treats Kiro output as data; a diff or model reply can nonetheless carry
+raw terminal control sequences. All output is stripped of ANSI CSI and OSC
+(including OSC 52 clipboard writes), DCS/PM/APC/SOS string sequences, bare
+`ESC`, and C0/C1 control bytes. Sanitization is applied at the **final
+stdout/stderr boundary** and at **every structured/raw output boundary**, and
+job event labels (§8) reuse the same sanitizer, so a background job's persisted
+event tail cannot smuggle escape sequences either.
+
+### 12.3 Generic resumable-session registry (`sessions.mjs`, extends §8)
+
+§8 stored `sessionId` in *job* metadata for `result --follow-up`. 0.2.0
+generalizes this into a standalone registry so any successful ACP turn — not
+just a background job — is resumable.
+
+- **Layout**: `~/.kiro-bridge/sessions/<cwd-hash>/<recordId>.json`, scoped by a
+  cwd hash so records from different repositories never mix.
+- **Independent immutable records**: each turn writes its own `0600` file
+  atomically (temp + rename, PID+UUID temp suffix), so concurrent processes
+  never clobber one another. The `recordId` is generated locally, time-prefixed
+  (so a directory listing sorts chronologically), and is the **only** value a
+  filesystem path is ever derived from — an untrusted `sessionId` never becomes
+  a path component (path-traversal guard).
+- **Bounded safe fields only**: `recordId`, `sessionId`, `agent`,
+  `source { kind, command }`, `write`, `transport` (must be `acp`), optional
+  `model`, `createdAt`. Prompts, focus text, diffs, file paths, model output,
+  and raw diagnostics are **never** stored — they are external data (ADR-004)
+  or outbound-redacted context (§7) and have no place in a resume index. Every
+  field is validated/sanitized on write and again on read; a malformed or
+  hand-edited record is ignored, not trusted.
+- **Who registers**: foreground `task`/`spec`/`review`, a **successful**
+  background completion, and a `result --follow-up`. **Cancel-first and the
+  subprocess transport do not register** — a cancelled turn or a one-shot
+  subprocess turn has no reusable ACP session (`RESUMABLE_TRANSPORT === 'acp'`).
+- **GC**: opportunistic on every successful register — prune by retention age
+  (`logRetentionDays`, default 30) and enforce a hard `maxRecords` cap (default
+  200) by dropping the oldest survivors.
+
+### 12.4 Resume lifecycle (`resume.mjs`)
+
+`/kiro-bridge:resume <question> [--session <record-or-session-id>] [--model]
+[--effort] [--timeout] [--quiet]`:
+
+1. **Resolve**: with no `--session`, the latest record for this cwd wins. A
+   selector matches a `recordId` first (exact, path-guarded), then falls back to
+   the most recent record whose `sessionId` equals the selector. The raw ACP id
+   is accepted but the generated record id is preferred because it avoids
+   surfacing the raw id.
+2. **Restore classification**: the record's `agent` and `write` flag are
+   restored, so a resumed review stays a read-only reviewer and a `--write`
+   worker keeps its scoped write tools — resume never escalates permissions.
+3. **Redact** the outbound question on the same path as any handoff payload
+   (§7), continue the conversation via `session/load`, **wrap** the reply in the
+   fixed trust boundary (ADR-004), **meter** usage, and **register the next
+   turn** back into the registry so the chain remains resumable.
+
+### 12.5 Background review semantics (extends §2.1, §8)
+
+`review --bg` runs the review through the same background job lifecycle as
+`task --bg` (§8): a job id is returned immediately, and `/kiro-bridge:result`
+returns the **same formatted findings body** as a foreground review. The
+background review path stores **no diff or file contents** in job metadata (only
+the bounded, sanitized event tail of §8 applies), preserves the fail-closed
+cancellation invariants, and a follow-up on a completed review job continues
+under the reviewer agent. An **unknown background command fails closed** rather
+than being silently accepted.

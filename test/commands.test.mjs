@@ -534,3 +534,36 @@ test('setup: ACP probe exception falls back to subprocess without failing instal
 test('parseArgs: rejects an empty follow-up value', () => {
   assert.throws(() => parseArgs(['result', '--follow-up', '   ']), /non-empty value/)
 })
+
+// --- resume command parsing / validation ---
+
+test('parseArgs: resume separates the question from --session and execution flags', () => {
+  const { command, flags } = parseArgs(['resume', 'why', 'is', 'this', '--session', 'rec-1', '--model', 'm', '--effort', 'high', '--timeout', '5000', '--quiet'])
+  assert.equal(command, 'resume')
+  assert.deepEqual(flags._, ['why', 'is', 'this'])
+  assert.equal(flags.session, 'rec-1')
+  assert.equal(flags.model, 'm')
+  assert.equal(flags.effort, 'high')
+  assert.equal(flags.timeoutMs, 5000)
+  assert.equal(flags.quiet, true)
+})
+
+test('parseArgs: --session requires a non-empty value', () => {
+  assert.throws(() => parseArgs(['resume', 'q', '--session']), /requires .*value/)
+  assert.throws(() => parseArgs(['resume', 'q', '--session', '   ']), /non-empty value/)
+})
+
+test('validateCommandFlags: resume accepts session/model/effort/timeout/quiet', () => {
+  const parsed = parseArgs(['resume', 'q', '--session', 'r', '--model', 'm', '--effort', 'high', '--timeout', '1000', '--quiet'])
+  assert.doesNotThrow(() => validateCommandFlags(parsed.command, parsed.flags))
+})
+
+test('validateCommandFlags: --session is not allowed on other commands', () => {
+  const parsed = parseArgs(['task', 'goal', '--session', 'r'])
+  assert.throws(() => validateCommandFlags(parsed.command, parsed.flags), /--session is not supported by task/)
+})
+
+test('validateCommandFlags: --follow-up is not allowed on resume', () => {
+  const parsed = parseArgs(['resume', 'q', '--follow-up', 'x'])
+  assert.throws(() => validateCommandFlags(parsed.command, parsed.flags), /--follow-up is not supported by resume/)
+})

@@ -15,9 +15,45 @@ import * as transport from './transport/index.mjs'
 import { AGENT_DEFS } from './agents.mjs'
 import { bridgeError, BridgeError, CODES } from './errors.mjs'
 import * as jobs from './jobs.mjs'
+import * as sessions from './sessions.mjs'
 import { recordUsage, readUsage, formatUsage } from './usage.mjs'
+import {
+  review as runReview,
+  formatSummary as formatReviewSummary,
+  DEFAULT_TIMEOUT_MS as REVIEW_TIMEOUT_MS,
+} from './review.mjs'
 
 export const DEFAULT_TIMEOUT_MS = 600_000 // design §8 failure mode table (task 600s)
+
+// Persist a successful ACP turn into the resume registry, best-effort. Only an
+// ACP turn that surfaced a sessionId is resumable — a subprocess/one-shot turn
+// (sessionId null) produces no record. Returns the new recordId or null. Never
+// throws: registration must never fail an already-succeeded delegated call.
+export function registerResumable({
+  res, agentDef, kind, command, write = false, cwd, config = loadConfig(),
+}) {
+  if (!res || !res.sessionId) return null
+  const record = sessions.registerSession(
+    {
+      sessionId: res.sessionId,
+      agent: agentDef.name,
+      source: { kind, command },
+      write: Boolean(write),
+      transport: res.transport,
+      model: res.metadata?.model || res.model,
+    },
+    { cwd, retentionDays: config.logRetentionDays },
+  )
+  return record ? record.recordId : null
+}
+
+// One concise, prose-free hint pointing at the resume command. Shown only when
+// a resumable record was actually created. Kept command-agnostic so task/spec/
+// review foreground output and the completed-job result share one wording.
+export function resumeHint(sessionRecordId) {
+  if (!sessionRecordId) return null
+  return `Resume this session: /kiro-bridge:resume "<question>" --session ${sessionRecordId}`
+}
 
 const TASK_CONSTRAINTS = [
   'Do not claim anything you could not confirm by reading it.',
@@ -52,6 +88,12 @@ export async function runDelegated({
   runFn = transport.run,
   config = loadConfig(),
   command = kind,
+  // Foreground callers register the successful resumable turn here. The
+  // background worker MUST leave this false and register only after its atomic
+  // completeJob returns 'done' — otherwise a cancel-first race would leave a
+  // resumable record for a job that never produced a result (see runWorker).
+  register = false,
+  write = false,
 }) {
   const { payload, redactions, excludedFiles } = buildPayload(
     { kind, goal, constraints },
@@ -97,6 +139,11 @@ export async function runDelegated({
   })
 
   const parsed = parseResponse(res.result)
+  // Only foreground callers register here. A resumable record is created only
+  // for an ACP turn with a sessionId; subprocess/null-session turns yield null.
+  const sessionRecordId = register
+    ? registerResumable({ res, agentDef, kind, command, write, cwd, config })
+    : null
   return {
     agent: agentDef.name,
     transport: res.transport,
@@ -106,6 +153,7 @@ export async function runDelegated({
     redactions,
     excludedFiles,
     metadata: res.metadata,
+    sessionRecordId,
   }
 }
 
@@ -126,12 +174,17 @@ export async function task(options = {}) {
 
   if (!background) {
     return runDelegated({
-      kind: 'task', goal, agentDef, constraints: TASK_CONSTRAINTS, cwd, command: 'task', ...rest,
+      kind: 'task', goal, agentDef, constraints: TASK_CONSTRAINTS, cwd, command: 'task',
+      register: true, write, ...rest,
     })
   }
 
   return spawnBackground({
-    goal, write, cwd, timeoutMs: rest.timeoutMs, model: rest.model, effort: rest.effort,
+    command: 'task',
+    cwd,
+    payloadOptions: {
+      goal, write, timeoutMs: rest.timeoutMs, model: rest.model, effort: rest.effort,
+    },
     ...(spawnFn ? { spawnFn } : {}),
   })
 }
@@ -142,11 +195,16 @@ function bridgePath() {
 
 // bg: create job -> re-exec itself detached. stdio is redirected to the log
 // files in the job directory — the parent (slash command) returns immediately.
-export function spawnBackground({ goal, write, cwd, timeoutMs, model, effort, spawnFn = spawn }) {
+//
+// Command-agnostic: task and review share this exact lifecycle. The command
+// name and its bounded payloadOptions are persisted on the job, and runWorker
+// dispatches on the command. payloadOptions must never carry diff or file
+// contents — the worker collects those itself (design §7).
+export function spawnBackground({ command, cwd, payloadOptions = {}, spawnFn = spawn }) {
   const { jobId, dir } = jobs.createJob({
     cwd,
-    command: 'task',
-    payloadOptions: { goal, write, timeoutMs, model, effort },
+    command,
+    payloadOptions,
   })
 
   const logs = jobs.jobLogPaths(jobId, cwd)
@@ -193,8 +251,34 @@ export function spawnBackground({ goal, write, cwd, timeoutMs, model, effort, sp
   return { background: true, jobId, dir }
 }
 
+// review --bg entry point. Reuses the exact same jobs lifecycle and detached
+// worker as task --bg. Only ref/focus/adversarial/model/effort/timeout are
+// persisted — the diff and file contents are collected later, in the worker
+// (design §7: no diff/file contents in the job payload).
+export function reviewBackground({
+  ref, focus, adversarial = false, cwd = process.cwd(),
+  timeoutMs, model, effort, spawnFn,
+} = {}) {
+  return spawnBackground({
+    command: 'review',
+    cwd,
+    payloadOptions: {
+      ref: ref || null,
+      focus,
+      adversarial: Boolean(adversarial),
+      timeoutMs,
+      model,
+      effort,
+    },
+    ...(spawnFn ? { spawnFn } : {}),
+  })
+}
+
 // The detached worker body. All state transitions and result recording happen here.
-export async function runWorker(jobId, { cwd = process.cwd(), runFn } = {}) {
+// Command-agnostic: dispatches to the per-command executor after the shared
+// queued→running startup. The executor returns a { wrapped, ...metaPatch }
+// shape; completion/cancellation semantics are identical across commands.
+export async function runWorker(jobId, { cwd = process.cwd(), runFn, collectDiffFn } = {}) {
   const job = jobs.readJob(jobId, cwd)
   if (!job) throw new Error(`unknown job: ${jobId}`)
   if (jobs.TERMINAL.has(job.status)) return null
@@ -212,19 +296,11 @@ export async function runWorker(jobId, { cwd = process.cwd(), runFn } = {}) {
     }, cwd)
     if (started !== 'running') return null
 
-    const { goal, write, timeoutMs, model, effort } = job.meta.payloadOptions
-    const result = await runDelegated({
-      kind: 'task',
-      goal,
-      agentDef: pickAgent({ write }),
-      cwd,
-      timeoutMs: timeoutMs || DEFAULT_TIMEOUT_MS,
-      model,
-      effort,
-      onEvent: (event) => { jobs.recordJobEvent(jobId, event, { cwd }) },
-      runFn: runFn || transport.run,
-      command: 'task:bg',
-    })
+    const onEvent = (event) => { jobs.recordJobEvent(jobId, event, { cwd }) }
+    const executor = WORKER_EXECUTORS[job.meta.command]
+    if (!executor) throw new Error(`unsupported background command: ${job.meta.command}`)
+    const result = await executor(job, { cwd, onEvent, runFn: runFn || transport.run, collectDiffFn })
+
     const metaPatch = { sessionId: result.sessionId, transport: result.transport }
     // Persist latest structured usage/plan from the completed ACP result.
     if (result.metadata?.usage) {
@@ -241,7 +317,26 @@ export async function runWorker(jobId, { cwd = process.cwd(), runFn } = {}) {
     // Result + metadata + running→done share one lock. If cancel won first,
     // completeJob returns cancelled and never persists a result body.
     const finished = jobs.completeJob(jobId, result.wrapped, metaPatch, cwd)
-    return finished === 'done' ? result : null
+    if (finished !== 'done') return null
+    // Register the resumable session ONLY after completion is atomically won.
+    // A cancel-first race returns 'cancelled' above, so a cancelled job never
+    // leaves a resumable record — there is no result to resume from. Subprocess
+    // / no-session results (e.g. review's no-changes body) yield null.
+    const agentDef = job.meta.command === 'review'
+      ? AGENT_DEFS.reviewer
+      : pickAgent({ write: Boolean(job.meta.payloadOptions?.write) })
+    const sessionRecordId = registerResumable({
+      res: result,
+      agentDef,
+      kind: job.meta.command === 'review' ? 'review' : 'task',
+      command: job.meta.command === 'review' ? 'review:bg' : 'task:bg',
+      write: Boolean(job.meta.payloadOptions?.write),
+      cwd,
+    })
+    if (sessionRecordId) {
+      try { jobs.updateMeta(jobId, { sessionRecordId }, cwd) } catch {}
+    }
+    return { ...result, sessionRecordId }
   } catch (err) {
     const message = err instanceof BridgeError ? `[${err.code}] ${err.message}` : String(err?.stack || err)
     // A startup lock timeout may still have a live holder. Keep this best-effort
@@ -249,6 +344,52 @@ export async function runWorker(jobId, { cwd = process.cwd(), runFn } = {}) {
     try { jobs.failJob(jobId, message, cwd, { timeoutMs: 250 }) } catch {}
     throw err
   }
+}
+
+// Per-command background executors. Each returns the same shape a foreground
+// call would (wrapped body + sessionId/transport/metadata) so the persisted
+// result body is identical to the foreground path.
+const WORKER_EXECUTORS = {
+  task(job, { cwd, onEvent, runFn }) {
+    const { goal, write, timeoutMs, model, effort } = job.meta.payloadOptions
+    return runDelegated({
+      kind: 'task',
+      goal,
+      agentDef: pickAgent({ write }),
+      cwd,
+      timeoutMs: timeoutMs || DEFAULT_TIMEOUT_MS,
+      model,
+      effort,
+      onEvent,
+      runFn,
+      command: 'task:bg',
+    })
+  },
+  // Review collects its own diff in the worker: the job payload stores only
+  // ref/focus/adversarial/model/effort/timeout, never diff or file contents.
+  // The returned body is the same wrapped findings the foreground path produces.
+  async review(job, { cwd, onEvent, runFn, collectDiffFn }) {
+    const { ref, focus, adversarial, timeoutMs, model, effort } = job.meta.payloadOptions
+    const res = await runReview({
+      cwd,
+      ref: ref || null,
+      focus,
+      adversarial: Boolean(adversarial),
+      timeoutMs: timeoutMs || REVIEW_TIMEOUT_MS,
+      model,
+      effort,
+      onEvent,
+      runFn,
+      ...(collectDiffFn ? { collectDiffFn } : {}),
+    })
+    // A no-reviewable-changes outcome has no wrapped body. Persist the same
+    // human-readable message the foreground path prints so result.txt is never
+    // empty and status/result stay consistent with foreground behaviour.
+    if (res.empty) {
+      return { wrapped: formatReviewSummary(res), sessionId: null, transport: null, metadata: undefined }
+    }
+    return res
+  },
 }
 
 // /kiro:result — retrieve results. --follow-up continues the session using the saved sessionId.
@@ -275,7 +416,12 @@ export async function result(options = {}) {
     })
   }
 
-  const agentDef = pickAgent({ write: Boolean(job.meta.payloadOptions?.write) })
+  // A review background job must continue under the reviewer agent, not the
+  // researcher — the follow-up is a review-context question about the same diff.
+  // Task jobs keep their write/read agent selection.
+  const agentDef = job.meta.command === 'review'
+    ? AGENT_DEFS.reviewer
+    : pickAgent({ write: Boolean(job.meta.payloadOptions?.write) })
   const config = loadConfig()
   const { payload } = buildTaskPayload({ goal: followUp, config })
 
@@ -311,7 +457,23 @@ export async function result(options = {}) {
 
   const parsed = parseResponse(res.result)
   const wrapped = wrapForClaude(parsed, { agent: agentDef.name, webDerived: Boolean(agentDef.webDerived) })
-  return { jobId, status: job.status, meta: job.meta, body, followUp: { question: followUp, wrapped } }
+  // A successful follow-up is itself a resumable ACP turn — persist it so the
+  // conversation can continue via /kiro-bridge:resume. Non-ACP/null-session
+  // follow-ups (the only kind that reach here already have a session, but keep
+  // the guard) yield no record.
+  const sessionRecordId = registerResumable({
+    res,
+    agentDef,
+    kind: job.meta.command === 'review' ? 'review' : 'task',
+    command: 'result:follow-up',
+    write: Boolean(job.meta.payloadOptions?.write),
+    cwd,
+    config,
+  })
+  return {
+    jobId, status: job.status, meta: job.meta, body,
+    followUp: { question: followUp, wrapped, sessionRecordId },
+  }
 }
 
 export function status({ cwd = process.cwd(), config = loadConfig(), now = Date.now(), identityFn } = {}) {
@@ -340,7 +502,10 @@ export function formatTask(result) {
   if (result.dryRun) {
     return `[dry-run] agent: ${result.agent}\n${JSON.stringify(result.payload, null, 2)}`
   }
-  return `transport: ${result.transport} | agent: ${result.agent}\n\n${result.wrapped}`
+  const lines = [`transport: ${result.transport} | agent: ${result.agent}`, '', result.wrapped]
+  const hint = resumeHint(result.sessionRecordId)
+  if (hint) lines.push('', hint)
+  return lines.join('\n')
 }
 
 export function formatResult(res) {
@@ -350,6 +515,13 @@ export function formatResult(res) {
   if (res.body) lines.push('', res.body)
   else if (res.status === 'running' || res.status === 'queued') lines.push('No result yet.')
   if (res.followUp) lines.push('', `--- follow-up: ${res.followUp.question} ---`, res.followUp.wrapped)
+  // A completed job that produced a resumable ACP session surfaces the same
+  // concise resume hint as the foreground paths, where available. A follow-up
+  // turn's fresh record takes precedence over the original job record.
+  const recordId = res.followUp?.sessionRecordId
+    || (res.status === 'done' ? res.meta.sessionRecordId : null)
+  const hint = resumeHint(recordId)
+  if (hint) lines.push('', hint)
   return lines.join('\n')
 }
 

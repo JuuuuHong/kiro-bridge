@@ -9,6 +9,7 @@ import { loadConfig } from './config.mjs'
 import * as transport from './transport/index.mjs'
 import { AGENT_PREFIX } from './agents.mjs'
 import { recordUsage } from './usage.mjs'
+import * as sessions from './sessions.mjs'
 
 export const DEFAULT_TIMEOUT_MS = 180_000 // design §8 failure mode table
 
@@ -17,11 +18,50 @@ const DEFAULT_CONSTRAINTS = [
   'Do not claim anything you could not confirm by reading it.',
 ]
 
+// Adversarial mode does not relax the read-only, findings-only contract — it
+// only sharpens what to look for. These constraints pressure-test the change
+// rather than granting any new capability, so they are additive to the
+// read-only default constraints above.
+const ADVERSARIAL_CONSTRAINTS = [
+  'Adopt a skeptical, adversarial stance: assume the change is wrong until the diff proves otherwise.',
+  'Challenge every stated or implied assumption; call out any that the diff does not actually establish.',
+  'Probe trust boundaries: untrusted input, authz/authn, injection, and unsafe deserialization at each boundary the diff touches.',
+  'Probe concurrency: races, ordering, atomicity, and lock scope on any shared or persisted state.',
+  'Probe rollback and data-loss: partial failure, non-atomic writes, and irreversible or destructive operations.',
+  'Consider at least one alternative design and state where it would be safer or simpler than the diff.',
+  'Remain strictly read-only and findings-only: do not modify files and report only as the findings JSON schema.',
+]
+
+// Default review goal. Kept as a constant so foreground and background share
+// the exact same base wording (background must return an identical body).
+const DEFAULT_GOAL = 'Review this diff and report defects as findings JSON.'
+
+// Compose the outbound review goal. The caller's focus text is appended to the
+// base goal here, before buildPayload runs, so the focus is redacted on the
+// same path as every other outbound string (design §7). Empty/whitespace focus
+// is ignored rather than emitting a dangling "Focus:" line.
+export function buildReviewGoal({ goal = DEFAULT_GOAL, focus } = {}) {
+  const base = goal || DEFAULT_GOAL
+  const trimmed = typeof focus === 'string' ? focus.trim() : ''
+  if (!trimmed) return base
+  return `${base}\nFocus especially on: ${trimmed}`
+}
+
+// Select the constraint set for a review. Adversarial mode adds the skeptical
+// pressure-testing constraints on top of the read-only defaults.
+export function reviewConstraints({ adversarial = false } = {}) {
+  return adversarial
+    ? [...DEFAULT_CONSTRAINTS, ...ADVERSARIAL_CONSTRAINTS]
+    : [...DEFAULT_CONSTRAINTS]
+}
+
 export async function review(options = {}) {
   const {
     cwd = process.cwd(),
     ref = null,
-    goal = 'Review this diff and report defects as findings JSON.',
+    goal = DEFAULT_GOAL,
+    focus,
+    adversarial = false,
     dryRun = false,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     model,
@@ -32,6 +72,11 @@ export async function review(options = {}) {
     runFn = transport.run,
     collectDiffFn = collectDiff,
     config = loadConfig(),
+    // Foreground review registers its successful resumable ACP turn. The
+    // background worker leaves this false and registers only after its atomic
+    // completeJob returns 'done' (see task.mjs runWorker), so a cancel-first
+    // background review never leaves a resumable record.
+    register = false,
   } = options
 
   const {
@@ -55,17 +100,23 @@ export async function review(options = {}) {
     return {
       empty: true,
       ref: usedRef,
+      adversarial,
       excludedFiles: collectedExcluded,
       message: `No reviewable changes relative to ${usedRef}${suffix}.`,
     }
   }
+
+  // Focus is folded into the goal (and constraints for adversarial) before
+  // buildPayload, so both are redacted on the standard outbound path (design §7).
+  const outboundGoal = buildReviewGoal({ goal, focus })
+  const constraints = reviewConstraints({ adversarial })
 
   const {
     payload,
     redactions,
     excludedFiles: payloadExcluded,
   } = buildPayload(
-    { kind: 'review', goal, diff, files, constraints: DEFAULT_CONSTRAINTS },
+    { kind: 'review', goal: outboundGoal, diff, files, constraints },
     { redaction: config.redaction },
   )
   const excludedFiles = [...new Set([...collectedExcluded, ...payloadExcluded])]
@@ -76,6 +127,7 @@ export async function review(options = {}) {
     return {
       empty: true,
       ref: usedRef,
+      adversarial,
       excludedFiles,
       message: `No reviewable changes relative to ${usedRef} (${excludedFiles.length} excluded file(s)).`,
     }
@@ -83,7 +135,7 @@ export async function review(options = {}) {
 
   // Path for a human to inspect the payload right before it's sent (design §7).
   if (dryRun) {
-    return { dryRun: true, payload, redactions, excludedFiles, untracked, ref: usedRef }
+    return { dryRun: true, adversarial, payload, redactions, excludedFiles, untracked, ref: usedRef }
   }
 
   const agent = `${AGENT_PREFIX}reviewer`
@@ -127,8 +179,25 @@ export async function review(options = {}) {
 
   const parsed = parseResponse(res.result)
 
+  // Foreground review registers the successful resumable ACP turn. Only an ACP
+  // turn with a sessionId yields a record; subprocess/null-session turns do not.
+  const sessionRecordId = register && res.sessionId
+    ? (sessions.registerSession(
+      {
+        sessionId: res.sessionId,
+        agent,
+        source: { kind: 'review', command: 'review' },
+        write: false,
+        transport: res.transport,
+        model: res.metadata?.model || res.model,
+      },
+      { cwd, retentionDays: config.logRetentionDays },
+    )?.recordId ?? null)
+    : null
+
   return {
     ref: usedRef,
+    adversarial,
     untracked,
     transport: res.transport,
     sessionId: res.sessionId,
@@ -138,15 +207,17 @@ export async function review(options = {}) {
     redactions,
     excludedFiles,
     metadata: res.metadata,
+    sessionRecordId,
   }
 }
 
 // Human-readable summary. No auto-apply path is provided (ADR-004 decision 1).
 export function formatSummary(result) {
   if (result.empty) return result.message
+  const mode = result.adversarial ? 'adversarial' : 'standard'
   if (result.dryRun) {
     const lines = [
-      `[dry-run] payload relative to ${result.ref} (not sent)`,
+      `[dry-run] payload relative to ${result.ref} (mode: ${mode}, not sent)`,
       JSON.stringify(result.payload, null, 2),
     ]
     if (result.redactions.length > 0) {
@@ -161,7 +232,7 @@ export function formatSummary(result) {
     return lines.join('\n')
   }
 
-  const head = [`transport: ${result.transport}`, `ref: ${result.ref}`]
+  const head = [`transport: ${result.transport}`, `mode: ${mode}`, `ref: ${result.ref}`]
   if (result.redactions.length > 0) {
     head.push(`redaction: ${result.redactions.length}`)
   }
@@ -178,5 +249,9 @@ export function formatSummary(result) {
     for (const f of result.parsed.findings) bySeverity[f.severity] += 1
     head.push(`findings: high ${bySeverity.high} / medium ${bySeverity.medium} / low ${bySeverity.low}`)
   }
-  return `${head.join(' | ')}\n\n${result.wrapped}`
+  const out = [`${head.join(' | ')}`, '', result.wrapped]
+  if (result.sessionRecordId) {
+    out.push('', `Resume this session: /kiro-bridge:resume "<question>" --session ${result.sessionRecordId}`)
+  }
+  return out.join('\n')
 }

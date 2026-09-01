@@ -10,11 +10,12 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { detectVersion, detectCapability, TRANSPORTS } from './transport/index.mjs'
 import { AGENT_DEFS, probeToolNaming, installAgent, agentsDir } from './agents.mjs'
 import { loadConfig, saveConfig } from './config.mjs'
+import { childEnvFromConfig } from './env.mjs'
 import { classifyOutput, CODES } from './errors.mjs'
 
-function execKiro(bin, args, { execFileFn = execFile } = {}) {
+function execKiro(bin, args, { execFileFn = execFile, config = loadConfig() } = {}) {
   return new Promise((resolve, reject) => {
-    execFileFn(bin, args, { timeout: 15_000 }, (err, stdout, stderr) => {
+    execFileFn(bin, args, { timeout: 15_000, env: childEnvFromConfig(config) }, (err, stdout, stderr) => {
       const out = `${stdout || ''}${stderr || ''}`
       if (err) return reject(Object.assign(new Error(out || err.message), { output: out }))
       resolve(String(stdout || ''))

@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-01
+
+### Added
+
+- **Universal resume — `/kiro-bridge:resume <question>`.** Continues any
+  recorded resumable ACP session with a follow-up question, reusing its
+  conversation via `session/load`.
+  `resume [--session <record-or-session-id>] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]`
+  defaults to this repo's most recent resumable session. It restores the
+  original session's agent and read/write classification (a resumed review
+  stays a read-only reviewer; a `--write` worker keeps its scoped write
+  permissions), redacts the outbound question on the same path as any handoff
+  payload, wraps the reply in the fixed trust boundary (ADR-004), meters usage,
+  and records the next turn back into the registry.
+- **Generic resumable-session registry.** Every successful, resumable ACP turn
+  (foreground `task`/`spec`/`review`, a successful background completion, and a
+  `result --follow-up`) is persisted as one immutable, atomic `0600` record
+  under `~/.kiro-bridge/sessions/<cwd-hash>/`. Records are independent files
+  scoped by cwd hash so different repositories never mix, are garbage-collected
+  by retention age and a hard maximum count, and carry only a bounded, safe
+  field set (record id, session id, agent, source kind/command, write flag,
+  transport, optional model, `createdAt`). Successful ACP outputs surface a
+  resume hint pointing at the generated record id.
+- **Review enhancement flags.** `/kiro-bridge:review` gains `--focus <text>`
+  (steer the review toward a concern; appended to the goal and redacted on the
+  same path as the diff), `--adversarial` (a skeptical, findings-only stance
+  that pressure-tests assumptions, trust boundaries, concurrency,
+  rollback/data-loss, and alternative designs — still strictly read-only), and
+  `--bg` (run the review as a background job returning the same formatted
+  findings body, with reviewer follow-up on the job's session).
+
+### Security
+
+- **Explicit child-environment allowlist.** Every kiro-cli spawn/exec now
+  receives an explicit environment instead of inheriting `process.env`. The
+  default allowlist forwards only what a normal CLI needs (`PATH`, `HOME`,
+  locale, temp dir, XDG/`LC_*` prefixes, proxy, CA bundle, `KIRO_AGENTS_DIR`)
+  and hard-denies cloud/provider credential variables (AWS credential/token
+  vars, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`, `NPM_TOKEN`),
+  `SSH_AUTH_SOCK`, `NODE_OPTIONS`, `FORCE_COLOR`, and npm config injection
+  (`npm_*`, `NPM_CONFIG_*`). It never forwards `KIRO_BRIDGE_HOME` or an
+  inherited `PWD`, and forces `NO_COLOR=1`. Config `envPassthrough` is an
+  exact-name, no-wildcard opt-in that can forward additional non-secret
+  variables (e.g. `AWS_PROFILE`, `AWS_REGION`); the hard-deny floor always
+  wins, so a passthrough entry can never re-introduce a credential variable.
+- **Full terminal-control sanitization.** All Kiro output is stripped of
+  terminal control sequences — ANSI CSI and OSC (including OSC 52 clipboard),
+  DCS/PM/APC/SOS strings, bare `ESC`, and C0/C1 control bytes — at the final
+  stdout/stderr boundary and at every structured/raw output boundary. Job event
+  labels reuse the same sanitizer, so a malicious diff or model reply cannot
+  emit escape sequences into the terminal.
+
+### Changed
+
+- **Unknown background commands fail closed.** An unrecognized background
+  command is rejected rather than silently falling back to the task executor.
+- **Result and skill guidance now surface resume.** `/kiro-bridge:result` and
+  the `task`/`spec`/`review` skills point at the generic resume flow for
+  arbitrary recorded sessions while preserving the existing job follow-up path.
+
 ## [0.1.2] - 2026-09-01
 
 ### Added
@@ -154,7 +214,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   permission spec.
 - Test suite grown to 119 tests.
 
-[Unreleased]: https://github.com/JuuuuHong/kiro-bridge/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/JuuuuHong/kiro-bridge/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/JuuuuHong/kiro-bridge/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/JuuuuHong/kiro-bridge/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/JuuuuHong/kiro-bridge/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/JuuuuHong/kiro-bridge/releases/tag/v0.1.0

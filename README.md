@@ -54,12 +54,43 @@ and Kiro's capabilities.
 | Command | Phase | Description |
 |---|---|---|
 | `/kiro-bridge:setup` | 1 | Verify install/auth and install the bundled Kiro agents |
-| `/kiro-bridge:review [ref] [--model <id>] [--effort <lv>]` | 1 | Have Kiro review the current diff and return structured findings |
-| `/kiro-bridge:task <goal> [--bg] [--write]` | 2 | Delegate investigation or debugging to Kiro, foreground or background |
-| `/kiro-bridge:spec <feature>` | 2 | Use Kiro's native spec mode to generate requirements/design under `.kiro/specs/` |
+| `/kiro-bridge:review [ref] [--focus <text>] [--adversarial] [--bg] [--model <id>] [--effort <lv>]` | 1 | Have Kiro review the current diff and return structured findings |
+| `/kiro-bridge:task <goal> [--bg] [--write] [--model <id>] [--effort <lv>]` | 2 | Delegate investigation or debugging to Kiro, foreground or background |
+| `/kiro-bridge:spec <feature> [--model <id>] [--effort <lv>]` | 2 | Use Kiro's native spec mode to generate requirements/design under `.kiro/specs/` |
 | `/kiro-bridge:result [job-id] [--follow-up] [--model <id>] [--effort <lv>]` | 2 | Retrieve a background job's result, optionally continuing the session |
+| `/kiro-bridge:resume <question> [--session <id>] [--model <id>] [--effort <lv>]` | 3 | Continue any recorded resumable Kiro session with a follow-up question |
 | `/kiro-bridge:status` | 2 | List jobs for this repo and show accumulated usage |
 | `/kiro-bridge:cancel <job-id>` | 2 | Cancel a running background job |
+
+### Review modes
+
+`review` defaults to a read-only defect review. `--focus "<concern>"` steers it
+toward a specific area; `--adversarial` makes the reviewer assume the change is
+wrong until proven otherwise and probe assumptions, trust boundaries,
+concurrency, and alternative designs — still strictly read-only and
+findings-only. `--bg` runs the review as a background job that returns the same
+formatted findings; retrieve it with `/kiro-bridge:result`.
+
+### Resumable sessions
+
+Every successful Kiro turn over ACP — foreground `task`/`spec`/`review`, a
+completed background job, or a `result --follow-up` — is recorded in a bounded,
+per-repository session registry, and successful output prints a resume hint.
+`/kiro-bridge:resume <question>` continues the most recent recorded session by
+default (or a specific one via `--session`), reusing its ACP conversation
+through `session/load` without resending context. Resume restores the original
+session's agent and read/write classification — a resumed review stays a
+read-only reviewer, a `--write` worker keeps its scoped write permissions — and
+the reply is wrapped as external data (ADR-004), never auto-applied.
+
+The registry is deliberately minimal: each record is an immutable atomic
+`0600` file scoped by a cwd hash so repositories never mix, holding only safe
+fields (record id, session id, agent, source kind/command, write flag,
+transport, optional model, timestamp). Prompts, diffs, file paths, and model
+output are **never** stored. Records are garbage-collected by age and a hard
+maximum count. `--session` accepts either the generated record id (from a
+resume hint) or the raw ACP session id, but the record id is preferred because
+it avoids surfacing the raw ACP id.
 
 ## Security model
 
@@ -88,6 +119,26 @@ and Kiro's capabilities.
   auto-applied. `task --write` is a separate, explicit execution mode that can
   modify scoped files; review its resulting git diff before accepting changes
   (ADR-004).
+- **Isolated child environment.** Every kiro-cli spawn/exec receives an
+  explicit allowlisted environment instead of inheriting the parent process
+  environment. The default allowlist forwards only what a normal CLI needs
+  (`PATH`, `HOME`, locale/`LC_*`, temp dir, XDG, proxy, CA bundle,
+  `KIRO_AGENTS_DIR`) and **hard-denies** cloud/provider credentials
+  (AWS credential and token vars, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+  `GITHUB_TOKEN`, `NPM_TOKEN`), `SSH_AUTH_SOCK`, `NODE_OPTIONS`, `FORCE_COLOR`,
+  and npm config injection (`npm_*`, `NPM_CONFIG_*`). `KIRO_BRIDGE_HOME` and an
+  inherited `PWD` are never forwarded, and `NO_COLOR=1` is forced. To forward an
+  extra variable, list its **exact name** in `envPassthrough` in
+  `~/.kiro-bridge/config.json` (no wildcards). This is a safe opt-in for
+  non-secret selectors such as `AWS_PROFILE` or `AWS_REGION`; the hard-deny
+  floor always wins, so a passthrough entry can never re-introduce a credential
+  variable.
+- **Output sanitization.** All Kiro output is stripped of terminal control
+  sequences — ANSI CSI and OSC (including OSC 52 clipboard), DCS/PM/APC/SOS
+  strings, bare `ESC`, and C0/C1 control bytes — at the final stdout/stderr
+  boundary and at every structured/raw output boundary, and job event labels
+  reuse the same sanitizer. A malicious diff or model reply cannot emit escape
+  sequences into your terminal.
 
 ## Design docs
 

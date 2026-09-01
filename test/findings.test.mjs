@@ -104,6 +104,57 @@ test('control characters are stripped', () => {
   assert.equal(r.findings[0].claim, 'abc')
 })
 
+// --- terminal control sequence stripping in findings (design §7) ---
+
+const ESC = '\u001B'
+const BEL = '\u0007'
+
+test('ANSI colour codes are stripped from structured fields', () => {
+  const r = sanitizeFindings({
+    findings: [{ severity: 'high', claim: `${ESC}[31malarming${ESC}[0m`, evidence: 'e', suggestion: 's' }],
+  })
+  assert.equal(r.findings[0].claim, 'alarming')
+})
+
+test('OSC 52 clipboard sequence is stripped from summary', () => {
+  const r = sanitizeFindings({
+    findings: [],
+    summary: `report${ESC}]52;c;ZXZpbA==${BEL}end`,
+  })
+  assert.equal(r.summary, 'reportend')
+})
+
+test('newline and tab survive findings sanitization', () => {
+  const r = sanitizeFindings({ findings: [{ claim: 'line1\nline2\tcol' }] })
+  assert.equal(r.findings[0].claim, 'line1\nline2\tcol')
+})
+
+test('raw text has terminal control sequences stripped on the parse-failure path', () => {
+  const r = parseResponse(`${ESC}[2Jcleared screen${ESC}]0;evil title${BEL}not json`)
+  assert.equal(r.ok, false)
+  assert.ok(!r.raw.includes(ESC))
+  assert.ok(!r.raw.includes(BEL))
+  assert.match(r.raw, /cleared screen/)
+})
+
+test('wrapped output for a parse failure carries no escape sequences', () => {
+  const wrapped = wrapForClaude(parseResponse(`${ESC}[31mmodel text${ESC}[0m${ESC}]52;c;x${BEL}`))
+  assert.ok(!wrapped.includes(ESC))
+  assert.ok(!wrapped.includes(BEL))
+})
+
+test('wrapped output for structured findings carries no escape sequences', () => {
+  const evil = JSON.stringify({
+    findings: [{ severity: 'high', claim: `${ESC}[2Jwiped`, evidence: `${ESC}]52;c;x${BEL}`, suggestion: 's' }],
+    summary: `${ESC}[31msummary`,
+  })
+  const wrapped = wrapForClaude(parseResponse(evil))
+  assert.ok(!wrapped.includes(ESC))
+  assert.ok(!wrapped.includes(BEL))
+  assert.match(wrapped, /wiped/)
+  assert.match(wrapped, /summary/)
+})
+
 // --- trust-boundary wrapping (ADR-004 decision 2) ---
 
 test('wrapper is applied on parse success', () => {

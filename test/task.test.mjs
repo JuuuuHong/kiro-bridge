@@ -11,6 +11,7 @@ import { TRUST_FENCE } from '../scripts/lib/findings.mjs'
 import { CODES } from '../scripts/lib/errors.mjs'
 import * as jobs from '../scripts/lib/jobs.mjs'
 import { readUsage } from '../scripts/lib/usage.mjs'
+import { listSessions, latestSession } from '../scripts/lib/sessions.mjs'
 
 let home
 const originalHome = process.env.KIRO_BRIDGE_HOME
@@ -484,4 +485,122 @@ test('status: classifies running-job health with an injected clock', () => {
   const text = formatStatus(res)
   assert.match(text, /possibly_stalled/)
   assert.match(text, /Last progress/)
+})
+
+// --- session registration paths (resume) ---
+
+test('task fg: a successful ACP turn registers a resumable session + returns its recordId', async () => {
+  const res = await task({ goal: 'investigate', cwd: CWD, runFn: okRun() })
+  assert.ok(res.sessionRecordId, 'foreground task returns a sessionRecordId')
+  const all = listSessions({ cwd: CWD })
+  assert.equal(all.length, 1)
+  assert.equal(all[0].recordId, res.sessionRecordId)
+  assert.equal(all[0].sessionId, 'sess-1')
+  assert.equal(all[0].agent, `${AGENT_PREFIX}researcher`)
+  assert.equal(all[0].source.command, 'task')
+  assert.equal(all[0].write, false)
+  assert.match(formatTask(res), /Resume this session/)
+})
+
+test('task fg --write: records the write flag on the session', async () => {
+  const res = await task({ goal: 'do the thing', write: true, cwd: CWD, runFn: okRun() })
+  const rec = listSessions({ cwd: CWD }).find((r) => r.recordId === res.sessionRecordId)
+  assert.equal(rec.write, true)
+  assert.equal(rec.agent, `${AGENT_PREFIX}worker`)
+})
+
+test('task fg: a subprocess/null-session turn registers no session', async () => {
+  const res = await task({ goal: 'g', cwd: CWD, runFn: okRun({ sessionId: null, transport: 'subprocess' }) })
+  assert.equal(res.sessionRecordId, null)
+  assert.equal(listSessions({ cwd: CWD }).length, 0)
+})
+
+test('spec fg: a successful ACP turn registers a spec session', async () => {
+  const res = await spec({ goal: 'notification settings', cwd: CWD, runFn: okRun() })
+  assert.ok(res.sessionRecordId)
+  const rec = latestSession({ cwd: CWD })
+  assert.equal(rec.source.command, 'spec')
+  assert.equal(rec.agent, `${AGENT_PREFIX}spec-writer`)
+})
+
+test('task bg: registers a session only after completeJob returns done', async () => {
+  const { jobId } = jobs.createJob({ cwd: CWD, command: 'task', payloadOptions: { goal: 'g', write: false } })
+  const result = await runWorker(jobId, { cwd: CWD, runFn: okRun() })
+  assert.ok(result.sessionRecordId, 'runWorker returns the new record id on done')
+  const all = listSessions({ cwd: CWD })
+  assert.equal(all.length, 1)
+  assert.equal(all[0].sessionId, 'sess-1')
+  assert.equal(all[0].source.command, 'task:bg')
+  // The record id is also mirrored onto the job meta for result formatting.
+  assert.equal(jobs.readJob(jobId, CWD).meta.sessionRecordId, all[0].recordId)
+})
+
+test('task bg: cancel-first leaves NO resumable session record', async () => {
+  const { jobId } = jobs.createJob({ cwd: CWD, command: 'task', payloadOptions: { goal: 'g', write: false } })
+  const result = await runWorker(jobId, {
+    cwd: CWD,
+    runFn: async (...args) => {
+      jobs.transition(jobId, 'cancelled', CWD)
+      return okRun()(...args)
+    },
+  })
+  assert.equal(result, null)
+  assert.equal(listSessions({ cwd: CWD }).length, 0, 'a cancelled job must not leave a resumable record')
+})
+
+test('review bg: a successful done registers a review session (reviewer agent)', async () => {
+  const { jobId } = jobs.createJob({
+    cwd: CWD, command: 'review',
+    payloadOptions: { ref: null, focus: null, adversarial: false },
+  })
+  const collectDiffFn = async () => ({
+    diff: 'diff --git a/x b/x\n+line\n',
+    files: [{ path: 'x' }],
+    ref: 'HEAD',
+  })
+  await runWorker(jobId, {
+    cwd: CWD,
+    collectDiffFn,
+    runFn: okRun({ result: JSON.stringify({ findings: [], summary: 'ok' }) }),
+  })
+  const rec = latestSession({ cwd: CWD })
+  assert.ok(rec)
+  assert.equal(rec.source.command, 'review:bg')
+  assert.equal(rec.agent, `${AGENT_PREFIX}reviewer`)
+})
+
+test('result --follow-up: registers the follow-up turn and surfaces a resume hint', async () => {
+  const { jobId } = jobs.createJob({ cwd: CWD, command: 'task', payloadOptions: { goal: 'g' } })
+  await runWorker(jobId, { cwd: CWD, runFn: okRun() })
+  const before = listSessions({ cwd: CWD }).length
+
+  const res = await result({
+    cwd: CWD, jobId, followUp: 'more please',
+    runFn: okRun({ sessionId: 'sess-followup' }),
+  })
+  assert.ok(res.followUp.sessionRecordId)
+  const all = listSessions({ cwd: CWD })
+  assert.equal(all.length, before + 1)
+  const created = all.find((r) => r.recordId === res.followUp.sessionRecordId)
+  assert.equal(created.sessionId, 'sess-followup')
+  assert.equal(created.source.command, 'result:follow-up')
+})
+
+test('runWorker: unknown background commands fail closed instead of running as task', async () => {
+  const created = jobs.createJob({ cwd: CWD, command: 'unknown-command', payloadOptions: { goal: 'must not run' } })
+  let sent = false
+  await assert.rejects(
+    runWorker(created.jobId, {
+      cwd: CWD,
+      runFn: async () => {
+        sent = true
+        throw new Error('must not call transport')
+      },
+    }),
+    /unsupported background command: unknown-command/,
+  )
+  assert.equal(sent, false)
+  const job = jobs.readJob(created.jobId, CWD)
+  assert.equal(job.status, 'failed')
+  assert.match(job.meta.error, /unsupported background command/)
 })

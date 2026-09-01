@@ -6,14 +6,15 @@ import { execFile, spawn } from 'node:child_process'
 import * as acp from './acp.mjs'
 import * as subprocess from './subprocess.mjs'
 import { loadConfig, saveConfig, getCachedCapability, setCachedCapability } from '../config.mjs'
+import { childEnvFromConfig } from '../env.mjs'
 import { bridgeError, CODES } from '../errors.mjs'
 
 export const TRANSPORTS = { ACP: 'acp', SUBPROCESS: 'subprocess' }
 export const NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000
 
-export function detectVersion({ bin = 'kiro-cli', execFileFn = execFile } = {}) {
+export function detectVersion({ bin = 'kiro-cli', execFileFn = execFile, config = loadConfig() } = {}) {
   return new Promise((resolve) => {
-    execFileFn(bin, ['--version'], { timeout: 5000 }, (err, stdout) => {
+    execFileFn(bin, ['--version'], { timeout: 5000, env: childEnvFromConfig(config) }, (err, stdout) => {
       if (err) return resolve(null)
       const match = String(stdout).match(/(\d+\.\d+\.\d+)/)
       resolve(match ? match[1] : String(stdout).trim() || null)

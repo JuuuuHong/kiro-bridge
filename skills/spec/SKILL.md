@@ -29,3 +29,9 @@ Default model is auto, but since spec quality depends on refinement, using
 3. Only requirements that pass review move into the implementation plan.
    Anything that contradicts the current code should be flagged, and the
    user's judgment sought.
+
+A successful spec run is recorded as a resumable session and its output
+includes a resume hint. To refine or ask a follow-up on the same session,
+run `/kiro-bridge:resume <question>` (latest by default, or `--session
+<record-id>`) — it keeps the spec-writer agent and its scoped write class
+without resending context.

@@ -5,6 +5,8 @@
 import { spawn } from 'node:child_process'
 import { JsonRpcClient } from './jsonrpc.mjs'
 import { normalizeAcpUpdate, normalizeKiroMetadata, createCollector, EVENT_TYPES } from './events.mjs'
+import { loadConfig } from '../config.mjs'
+import { childEnvFromConfig } from '../env.mjs'
 import { bridgeError, classifyOutput, CODES } from '../errors.mjs'
 
 export const PROTOCOL_VERSION = 1
@@ -82,10 +84,11 @@ export async function probe({
   spawnFn = spawn,
   timeoutMs = 5000,
   terminationGraceMs = 500,
+  config = loadConfig(),
 } = {}) {
   let child
   try {
-    child = spawnFn(bin, ['acp'], { stdio: ['pipe', 'pipe', 'pipe'] })
+    child = spawnFn(bin, ['acp'], { stdio: ['pipe', 'pipe', 'pipe'], env: childEnvFromConfig(config) })
   } catch (err) {
     return { available: false, reason: String(err?.message || err) }
   }
@@ -142,6 +145,7 @@ export async function run(payload, options = {}) {
     timeoutMs = 180_000,
     terminationGraceMs = 500,
     spawnFn = spawn,
+    config = loadConfig(),
   } = options
 
   const args = ['acp']
@@ -151,7 +155,7 @@ export async function run(payload, options = {}) {
 
   let child
   try {
-    child = spawnFn(bin, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+    child = spawnFn(bin, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: childEnvFromConfig(config) })
   } catch (err) {
     throw bridgeError(CODES.SPAWN_FAILED, { cause: String(err?.message || err) })
   }

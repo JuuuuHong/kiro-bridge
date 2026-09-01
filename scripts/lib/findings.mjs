@@ -4,6 +4,8 @@
 // applies regardless of parse success/failure. Sanitizing and wrapping are
 // both kept in this one file to make testing easy.
 
+import { sanitizeTerminal } from './sanitize.mjs'
+
 export const SEVERITIES = ['low', 'medium', 'high']
 
 export const CAPS = {
@@ -15,8 +17,6 @@ export const CAPS = {
   summary: 4000,
   raw: 100_000,
 }
-
-const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g
 
 // Wrapper fence strings. Stripped from the content right before insertion,
 // so that a matching token in the content can't be used to escape the wrapper.
@@ -34,7 +34,7 @@ const WEB_NOTICE =
 
 function clean(value, cap) {
   if (value == null) return ''
-  const text = String(value).replace(CONTROL_CHARS, '')
+  const text = sanitizeTerminal(value)
   return text.length > cap ? `${text.slice(0, cap)}… [truncated]` : text
 }
 

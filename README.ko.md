@@ -51,12 +51,40 @@ kiro-bridge는 Kiro 자체의 툴 신뢰 모델, 커스텀 에이전트, spec/pl
 | 커맨드 | Phase | 설명 |
 |---|---|---|
 | `/kiro-bridge:setup` | 1 | 설치·인증 확인 후 번들 Kiro 에이전트 설치 |
-| `/kiro-bridge:review [ref] [--model <id>] [--effort <lv>]` | 1 | 현재 diff를 Kiro가 리뷰하고 구조화 findings 반환 |
-| `/kiro-bridge:task <목표> [--bg] [--write]` | 2 | 조사·디버깅을 Kiro에 위임 (foreground 또는 background) |
-| `/kiro-bridge:spec <기능>` | 2 | Kiro 네이티브 spec 모드로 `.kiro/specs/`에 requirements/design 생성 |
+| `/kiro-bridge:review [ref] [--focus <text>] [--adversarial] [--bg] [--model <id>] [--effort <lv>]` | 1 | 현재 diff를 Kiro가 리뷰하고 구조화 findings 반환 |
+| `/kiro-bridge:task <목표> [--bg] [--write] [--model <id>] [--effort <lv>]` | 2 | 조사·디버깅을 Kiro에 위임 (foreground 또는 background) |
+| `/kiro-bridge:spec <기능> [--model <id>] [--effort <lv>]` | 2 | Kiro 네이티브 spec 모드로 `.kiro/specs/`에 requirements/design 생성 |
 | `/kiro-bridge:result [job-id] [--follow-up] [--model <id>] [--effort <lv>]` | 2 | 백그라운드 잡 결과 회수, 세션 이어서 후속 질문 가능 |
+| `/kiro-bridge:resume <질문> [--session <id>] [--model <id>] [--effort <lv>]` | 3 | 기록된 재개 가능한 Kiro 세션을 후속 질문으로 이어감 |
 | `/kiro-bridge:status` | 2 | 이 저장소의 잡 목록과 누적 사용량 표시 |
 | `/kiro-bridge:cancel <job-id>` | 2 | 실행 중인 백그라운드 잡 취소 |
+
+### 리뷰 모드
+
+`review`는 기본적으로 읽기 전용 결함 리뷰다. `--focus "<관심사>"`로 특정
+영역에 집중시킬 수 있고, `--adversarial`은 변경이 틀렸다고 가정하고 가정·
+신뢰 경계·동시성·대안 설계를 적극적으로 파고든다 — 여전히 엄격히 읽기 전용,
+findings 전용이다. `--bg`는 리뷰를 백그라운드 잡으로 돌리며 동일한 형식의
+findings를 반환한다. 결과는 `/kiro-bridge:result`로 회수한다.
+
+### 재개 가능한 세션
+
+ACP를 통한 모든 성공한 Kiro 턴 — foreground `task`/`spec`/`review`, 완료된
+백그라운드 잡, `result --follow-up` — 은 저장소별 제한된 세션 레지스트리에
+기록되고, 성공 출력에는 resume 힌트가 표시된다. `/kiro-bridge:resume <질문>`은
+기본적으로 가장 최근에 기록된 세션(또는 `--session`으로 특정 세션)을
+`session/load`로 이어받아 컨텍스트 재전송 없이 대화를 계속한다. resume은
+원래 세션의 에이전트와 읽기/쓰기 분류를 복원한다 — 재개된 리뷰는 읽기 전용
+리뷰어로 남고, `--write` worker는 제한된 쓰기 권한을 유지한다 — 응답은 외부
+데이터로 래핑되며(ADR-004) 자동 반영되지 않는다.
+
+레지스트리는 의도적으로 최소한이다: 각 레코드는 cwd 해시로 스코프된 불변
+atomic `0600` 파일이라 저장소가 섞이지 않으며, 안전한 필드(레코드 id, 세션
+id, 에이전트, source kind/command, write 플래그, transport, 선택적 model,
+타임스탬프)만 담는다. 프롬프트·diff·파일 경로·모델 출력은 **절대** 저장되지
+않는다. 레코드는 보존 기간과 최대 개수 상한으로 GC된다. `--session`은 생성된
+레코드 id(resume 힌트에서 제공)와 원본 ACP 세션 id를 모두 받지만, 원본 ACP
+id 노출을 피하므로 레코드 id가 권장된다.
 
 ## 보안 모델
 
@@ -81,6 +109,23 @@ kiro-bridge는 Kiro 자체의 툴 신뢰 모델, 커스텀 에이전트, spec/pl
   항상 고정 신뢰 경계로 래핑되고 스키마로 소독되며 자동 반영되지 않는다.
   `task --write`는 제한된 파일을 수정할 수 있는 별도의 명시적 실행 모드이므로,
   결과를 수락하기 전에 생성된 git diff를 검토해야 한다 (ADR-004).
+- **격리된 자식 환경.** 모든 kiro-cli spawn/exec는 부모 프로세스 환경을
+  상속하지 않고 명시적 허용 목록 환경을 받는다. 기본 허용 목록은 일반 CLI에
+  필요한 것(`PATH`, `HOME`, 로케일/`LC_*`, 임시 디렉터리, XDG, 프록시, CA
+  번들, `KIRO_AGENTS_DIR`)만 전달하고, 클라우드·프로바이더 자격증명(AWS
+  자격증명·토큰 변수, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`,
+  `NPM_TOKEN`), `SSH_AUTH_SOCK`, `NODE_OPTIONS`, `FORCE_COLOR`, npm config
+  주입(`npm_*`, `NPM_CONFIG_*`)은 **하드 차단**한다. `KIRO_BRIDGE_HOME`과
+  상속된 `PWD`는 전달하지 않으며 `NO_COLOR=1`을 강제한다. 추가 변수를
+  전달하려면 `~/.kiro-bridge/config.json`의 `envPassthrough`에 **정확한
+  이름**을 나열한다(와일드카드 없음). `AWS_PROFILE`, `AWS_REGION` 같은 비밀이
+  아닌 선택자에 대한 안전한 opt-in이며, 하드 차단이 항상 우선하므로
+  passthrough 항목이 자격증명 변수를 다시 들일 수는 없다.
+- **출력 소독.** 모든 Kiro 출력은 터미널 제어 시퀀스 — ANSI CSI 및 OSC(OSC 52
+  클립보드 포함), DCS/PM/APC/SOS 문자열, 단독 `ESC`, C0/C1 제어 바이트 — 가
+  최종 stdout/stderr 경계와 모든 구조화/원시 출력 경계에서 제거되며, 잡 이벤트
+  라벨도 동일한 소독기를 재사용한다. 악의적인 diff나 모델 응답이 터미널로
+  이스케이프 시퀀스를 방출할 수 없다.
 
 ## 설계 문서
 

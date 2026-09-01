@@ -26,6 +26,35 @@ continues with agent installation.
 While unauthenticated, **agents are not installed.** This avoids leaving a
 half-finished install state behind.
 
+## Child-environment isolation & `~/.kiro-bridge/config.json`
+
+Every kiro-cli spawn/exec runs with an explicit allowlisted environment, not the
+inherited parent environment. The defaults forward only what a normal CLI needs
+(`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TERM`, temp dir, `LANG`/`LANGUAGE`
++ the `LC_*` prefix, proxy vars, CA-bundle/TLS-trust vars, `KIRO_AGENTS_DIR`,
+and the `XDG_` prefix), never forward `KIRO_BRIDGE_HOME` or an inherited `PWD`,
+and force `NO_COLOR=1`.
+
+Credential-bearing and runtime-injection variables are **hard-denied** and can
+never be forwarded — AWS credential/token vars and the container/IMDS credential
+endpoints, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`, `NPM_TOKEN`,
+`SSH_AUTH_SOCK`, `NODE_OPTIONS`, `FORCE_COLOR`, and npm config injection
+(`npm_*`, `NPM_CONFIG_*`).
+
+To forward an extra variable, add its **exact name** to `envPassthrough` in
+`~/.kiro-bridge/config.json` (no wildcards, no globs):
+
+```json
+{
+  "envPassthrough": ["AWS_PROFILE", "AWS_REGION"]
+}
+```
+
+Precedence is **deny > (default-allow | passthrough)** — the hard-deny floor is
+applied last, so a passthrough entry can never re-introduce a credential
+variable such as `AWS_SECRET_ACCESS_KEY`. `envPassthrough` is only for
+non-secret selectors like `AWS_PROFILE` or `AWS_REGION`.
+
 ## Tool-naming convention probe
 
 Kiro's canonical tool names are inconsistent across docs — the

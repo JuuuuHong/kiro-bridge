@@ -5,6 +5,8 @@
 // auto-denied without prompting, so onPermissionRequest collapses to "always deny", caught by the denial detector.
 import { spawn } from 'node:child_process'
 import { createLineSplitter, normalizeStreamJsonLine, createCollector } from './events.mjs'
+import { loadConfig } from '../config.mjs'
+import { childEnvFromConfig } from '../env.mjs'
 import { bridgeError, classifyOutput, CODES } from '../errors.mjs'
 
 export function buildArgs({ agent, model, effort } = {}) {
@@ -24,11 +26,12 @@ export async function run(payload, options = {}) {
     timeoutMs = 180_000,
     terminationGraceMs = 500,
     spawnFn = spawn,
+    config = loadConfig(),
   } = options
 
   let child
   try {
-    child = spawnFn(bin, buildArgs(options), { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+    child = spawnFn(bin, buildArgs(options), { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: childEnvFromConfig(config) })
   } catch (err) {
     throw bridgeError(CODES.SPAWN_FAILED, { cause: String(err?.message || err) })
   }

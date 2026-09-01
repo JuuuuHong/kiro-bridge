@@ -578,3 +578,20 @@ test('cross-process: concurrent writers under the lock lose no fields', () => {
     }
   })
 })
+
+test('stripControl: removes ANSI/OSC terminal controls from persisted labels', () => {
+  const hostile = '\u001b]52;c;Y2xpcGJvYXJk\u0007\u001b[31mred\u001b[0m\nnext\tlabel'
+  assert.equal(jobs.stripControl(hostile), 'red next label')
+})
+
+test('jobId path guard rejects traversal before deriving any filesystem path', () => {
+  const valid = jobs.createJob({ cwd: CWD, command: 'task' }).jobId
+  assert.equal(jobs.isValidJobId(valid), true)
+  for (const hostile of ['../../escape', '../x', '/tmp/x', 'nonexistent-job', '', null]) {
+    assert.equal(jobs.isValidJobId(hostile), false)
+    assert.throws(() => jobs.jobDir(hostile, CWD), /invalid jobId/)
+    assert.equal(jobs.readJob(hostile, CWD), null)
+    assert.equal(jobs.readResult(hostile, CWD), null)
+    assert.equal(jobs.cancelJob(hostile, { cwd: CWD }).ok, false)
+  }
+})

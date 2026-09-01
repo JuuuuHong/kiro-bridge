@@ -3,20 +3,35 @@
 import { review, formatSummary } from './lib/review.mjs'
 import { setup, formatSetup } from './lib/setup.mjs'
 import {
-  task, runWorker, result, status, cancel,
+  task, runWorker, result, status, cancel, reviewBackground,
   formatTask, formatResult, formatStatus, formatCancel,
 } from './lib/task.mjs'
 import { spec, formatSpec } from './lib/spec.mjs'
+import { resume, formatResume } from './lib/resume.mjs'
 import { EVENT_TYPES } from './lib/transport/events.mjs'
 import { BridgeError } from './lib/errors.mjs'
+import { sanitizeTerminal } from './lib/sanitize.mjs'
+
+// All bridge output crosses a terminal boundary. Result/status/error strings
+// embed model- and process-derived text, so sanitize at the write edge so no
+// escape sequence (cursor, screen, OSC 52 clipboard, title) can reach a TTY.
+// Findings bodies are already sanitized upstream; this is defence in depth.
+function outWrite(text) {
+  process.stdout.write(sanitizeTerminal(text))
+}
+
+function errWrite(text) {
+  process.stderr.write(sanitizeTerminal(text))
+}
 
 const USAGE = `kiro-bridge
 
   bridge.mjs setup  [--force]
-  bridge.mjs review [ref]    [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
+  bridge.mjs review [ref]    [--focus <text>] [--adversarial] [--bg] [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
   bridge.mjs task   <goal>   [--bg] [--write] [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
   bridge.mjs spec   <goal>   [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
   bridge.mjs result [job-id] [--follow-up <question>] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
+  bridge.mjs resume <question> [--session <id>] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
   bridge.mjs status
   bridge.mjs cancel <job-id>
 
@@ -30,18 +45,22 @@ const FLAG_NAMES = {
   quiet: '--quiet',
   background: '--bg',
   write: '--write',
+  adversarial: '--adversarial',
+  focus: '--focus',
   timeoutMs: '--timeout',
   model: '--model',
   effort: '--effort',
   followUp: '--follow-up',
+  session: '--session',
 }
 
 const ALLOWED_FLAGS = {
   setup: new Set(['force']),
-  review: new Set(['dryRun', 'model', 'effort', 'timeoutMs', 'quiet']),
+  review: new Set(['focus', 'adversarial', 'background', 'dryRun', 'model', 'effort', 'timeoutMs', 'quiet']),
   task: new Set(['background', 'write', 'dryRun', 'model', 'effort', 'timeoutMs', 'quiet']),
   spec: new Set(['dryRun', 'model', 'effort', 'timeoutMs', 'quiet']),
   result: new Set(['followUp', 'model', 'effort', 'timeoutMs', 'quiet']),
+  resume: new Set(['session', 'model', 'effort', 'timeoutMs', 'quiet']),
   status: new Set(),
   cancel: new Set(),
   _worker: new Set(),
@@ -62,6 +81,12 @@ export function validateCommandFlags(command, flags) {
     if (flags[key] !== undefined && !allowed.has(key)) {
       throw new Error(`${FLAG_NAMES[key]} is not supported by ${command}`)
     }
+  }
+  // --bg detaches a worker and returns a job id immediately; --dry-run only
+  // prints the payload without sending. Combining them is contradictory, so
+  // reject it outright rather than silently ignoring one (both review + task).
+  if ((command === 'review' || command === 'task') && flags.background && flags.dryRun) {
+    throw new Error('--bg cannot be combined with --dry-run')
   }
   if (command === 'result' && !flags.followUp && (
     flags.model !== undefined || flags.effort !== undefined
@@ -88,6 +113,8 @@ export function parseArgs(argv) {
     else if (arg === '--quiet') flags.quiet = true
     else if (arg === '--bg') flags.background = true
     else if (arg === '--write') flags.write = true
+    else if (arg === '--adversarial') flags.adversarial = true
+    else if (arg === '--focus') { flags.focus = optionValue(rest, i, arg); i += 1 }
     else if (arg === '--timeout') {
       const raw = optionValue(rest, i, arg)
       const timeoutMs = Number(raw)
@@ -100,6 +127,7 @@ export function parseArgs(argv) {
     else if (arg === '--model') { flags.model = optionValue(rest, i, arg); i += 1 }
     else if (arg === '--effort') { flags.effort = optionValue(rest, i, arg); i += 1 }
     else if (arg === '--follow-up') { flags.followUp = optionValue(rest, i, arg); i += 1 }
+    else if (arg === '--session') { flags.session = optionValue(rest, i, arg); i += 1 }
     else if (arg.startsWith('--')) throw new Error(`unknown flag: ${arg}`)
     else flags._.push(arg)
   }
@@ -112,9 +140,9 @@ function makeReporter(quiet) {
   if (quiet) return undefined
   return (event) => {
     if (event.type === EVENT_TYPES.TOOL_CALL) {
-      process.stderr.write(`  · ${event.title || 'tool'}\n`)
+      errWrite(`  · ${event.title || 'tool'}\n`)
     } else if (event.type === EVENT_TYPES.DENIED) {
-      process.stderr.write(`  ! tool denial detected\n`)
+      errWrite(`  ! tool denial detected\n`)
     }
   }
 }
@@ -124,7 +152,7 @@ async function main(argv) {
   const { command, flags } = parseArgs(argv)
 
   if (!command || command === 'help' || command === '--help') {
-    process.stdout.write(USAGE)
+    outWrite(USAGE)
     return 0
   }
 
@@ -132,20 +160,35 @@ async function main(argv) {
 
   if (command === 'setup') {
     const result = await setup({ force: flags.force })
-    process.stdout.write(`${formatSetup(result)}\n`)
+    outWrite(`${formatSetup(result)}\n`)
     return result.ok ? 0 : 1
   }
 
   if (command === 'review') {
+    if (flags.background) {
+      const bg = reviewBackground({
+        ref: flags._[0] || null,
+        focus: flags.focus,
+        adversarial: flags.adversarial,
+        model: flags.model,
+        effort: flags.effort,
+        timeoutMs: flags.timeoutMs,
+      })
+      outWrite(`${formatTask(bg)}\n`)
+      return 0
+    }
     const res = await review({
       ref: flags._[0] || null,
+      focus: flags.focus,
+      adversarial: flags.adversarial,
       dryRun: flags.dryRun,
       model: flags.model,
       effort: flags.effort,
       timeoutMs: flags.timeoutMs,
+      register: true,
       onEvent: makeReporter(flags.quiet),
     })
-    process.stdout.write(`${formatSummary(res)}\n`)
+    outWrite(`${formatSummary(res)}\n`)
     return 0
   }
 
@@ -160,7 +203,7 @@ async function main(argv) {
       effort: flags.effort,
       onEvent: makeReporter(flags.quiet),
     })
-    process.stdout.write(`${formatTask(res)}\n`)
+    outWrite(`${formatTask(res)}\n`)
     return 0
   }
 
@@ -173,7 +216,7 @@ async function main(argv) {
       effort: flags.effort,
       onEvent: makeReporter(flags.quiet),
     })
-    process.stdout.write(`${formatSpec(res)}\n`)
+    outWrite(`${formatSpec(res)}\n`)
     return 0
   }
 
@@ -186,18 +229,31 @@ async function main(argv) {
       timeoutMs: flags.timeoutMs,
       onEvent: makeReporter(flags.quiet),
     })
-    process.stdout.write(`${formatResult(res)}\n`)
+    outWrite(`${formatResult(res)}\n`)
+    return 0
+  }
+
+  if (command === 'resume') {
+    const res = await resume({
+      question: flags._.join(' '),
+      session: flags.session,
+      model: flags.model,
+      effort: flags.effort,
+      timeoutMs: flags.timeoutMs,
+      onEvent: makeReporter(flags.quiet),
+    })
+    outWrite(`${formatResume(res)}\n`)
     return 0
   }
 
   if (command === 'status') {
-    process.stdout.write(`${formatStatus(status())}\n`)
+    outWrite(`${formatStatus(status())}\n`)
     return 0
   }
 
   if (command === 'cancel') {
     const res = cancel({ jobId: flags._[0] })
-    process.stdout.write(`${formatCancel(res)}\n`)
+    outWrite(`${formatCancel(res)}\n`)
     return res.ok ? 0 : 1
   }
 
@@ -207,7 +263,7 @@ async function main(argv) {
     return 0
   }
 
-  process.stderr.write(`unknown command: ${command}\n\n${USAGE}`)
+  errWrite(`unknown command: ${command}\n\n${USAGE}`)
   return 2
 }
 
@@ -218,16 +274,16 @@ if (invokedDirectly) {
     .then((code) => process.exit(code))
     .catch((err) => {
       if (err instanceof BridgeError) {
-        process.stderr.write(`[${err.code}] ${err.message}\n`)
+        errWrite(`[${err.code}] ${err.message}\n`)
         if (err.details?.reason) {
-          process.stderr.write(`  ${err.details.reason}\n`)
+          errWrite(`  ${err.details.reason}\n`)
         }
         if (err.details?.partial) {
-          process.stderr.write(`\nPartial output:\n${err.details.partial}\n`)
+          errWrite(`\nPartial output:\n${err.details.partial}\n`)
         }
         process.exit(1)
       }
-      process.stderr.write(`${err?.stack || err}\n`)
+      errWrite(`${err?.stack || err}\n`)
       process.exit(1)
     })
 }

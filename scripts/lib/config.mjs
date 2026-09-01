@@ -16,6 +16,11 @@ const DEFAULTS = {
     ],
     privateHosts: [],
   },
+  // Extra *exact* environment variable names to forward to kiro-cli child
+  // processes, on top of the built-in allowlist (design §7). Opt-in only; no
+  // wildcards. See scripts/lib/env.mjs. The hard denial floor there still
+  // applies, so listing a denied name (e.g. AWS_*) has no effect.
+  envPassthrough: [],
   logRetentionDays: 30,
 }
 
@@ -39,6 +44,11 @@ export function loadConfig() {
     ...onDisk,
     redaction: { ...DEFAULTS.redaction, ...(onDisk.redaction || {}) },
     capabilities: { ...(onDisk.capabilities || {}) },
+    // Only accept string entries; anything else is ignored so a malformed
+    // config can never inject non-name values into the env allowlist.
+    envPassthrough: Array.isArray(onDisk.envPassthrough)
+      ? onDisk.envPassthrough.filter((v) => typeof v === 'string')
+      : DEFAULTS.envPassthrough,
   }
 }
 

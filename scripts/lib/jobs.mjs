@@ -12,6 +12,7 @@ import {
 import { execFileSync } from 'node:child_process'
 import { platform } from 'node:os'
 import { bridgeHome } from './config.mjs'
+import { sanitizeTerminal } from './sanitize.mjs'
 
 export const STATUSES = ['queued', 'running', 'done', 'failed', 'cancelled']
 export const TERMINAL = new Set(['done', 'failed', 'cancelled'])
@@ -70,7 +71,19 @@ export function jobsDir(cwd = process.cwd()) {
   return join(jobsRoot(), cwdHash(cwd))
 }
 
+// Generated job ids are the only values allowed to become path components.
+// CLI-supplied ids must match this exact shape, preventing traversal outside
+// the cwd-scoped jobs directory.
+const JOB_ID_RE = /^[0-9]{17}-[0-9a-f]{8}$/
+
+export function isValidJobId(jobId) {
+  return typeof jobId === 'string' && JOB_ID_RE.test(jobId)
+}
+
 export function jobDir(jobId, cwd = process.cwd()) {
+  if (!isValidJobId(jobId)) {
+    throw new Error('refusing to derive a path from an invalid jobId')
+  }
   return join(jobsDir(cwd), jobId)
 }
 
@@ -198,6 +211,7 @@ export function withJobLock(dir, fn, lockOptions = {}) {
 // Read job state without any lock. Used by internal helpers that already hold
 // the lock, and by pure read callers where a momentary stale view is fine.
 function readJobUnlocked(jobId, cwd) {
+  if (!isValidJobId(jobId)) return null
   const dir = jobDir(jobId, cwd)
   let meta
   try {
@@ -273,6 +287,7 @@ export function createJob({ cwd = process.cwd(), command, payloadOptions = {} } 
 }
 
 export function readJob(jobId, cwd = process.cwd()) {
+  if (!isValidJobId(jobId)) return null
   const dir = jobDir(jobId, cwd)
   let meta
   try {
@@ -348,6 +363,7 @@ export function writeResult(jobId, text, cwd = process.cwd()) {
 }
 
 export function readResult(jobId, cwd = process.cwd()) {
+  if (!isValidJobId(jobId)) return null
   try {
     return readFileSync(join(jobDir(jobId, cwd), 'result.txt'), 'utf8')
   } catch {
@@ -452,6 +468,7 @@ export function cancelJob(jobId, {
   killFn = (pid) => process.kill(pid, 'SIGTERM'),
   identityFn = processIdentity,
 } = {}) {
+  if (!isValidJobId(jobId)) return { ok: false, reason: `unknown job: ${jobId}` }
   const dir = jobDir(jobId, cwd)
   // The whole read → identity decision → signal → transition sequence runs
   // under one lock, re-reading fresh state, so a worker transition can never
@@ -530,12 +547,12 @@ export const MAX_RECENT_EVENTS = 20
 export const HEALTH_QUIET_MS = 60_000        // 1 min
 export const HEALTH_STALLED_MS = 300_000     // 5 min
 
-// Strip ANSI escapes and control chars so a persisted summary can never carry
-// terminal control sequences or smuggle raw prose formatting.
+// Strip terminal escapes and control chars using the same final-boundary
+// sanitizer as foreground output. Event labels are one-line metadata, so the
+// otherwise-preserved newline/tab characters collapse to spaces here.
 export function stripControl(s) {
   if (typeof s !== 'string') return ''
-  // eslint-disable-next-line no-control-regex
-  return s.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim()
+  return sanitizeTerminal(s).replace(/[\n\t]+/g, ' ').trim()
 }
 
 function boundedLabel(s, max = 80) {
