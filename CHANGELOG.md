@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Plugin command deduplication.** Removed the four legacy flat command files
+  that duplicated the richer `setup`, `review`, `task`, and `spec` skills in
+  Claude Code's component inventory. The unique `result`, `status`, and
+  `cancel` commands remain, yielding exactly seven plugin slash commands.
 - **Output classification uses diagnostics only.** Auth/throttle classification
   on both the ACP and subprocess transports now reads process diagnostics
   (`stderr`) exclusively, never collector/model text. A clean, successful agent

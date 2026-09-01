@@ -64,7 +64,8 @@ invokes Kiro's native `--mode spec` (§2.3).
 ```
 plugins/kiro-bridge/
 ├── .claude-plugin/plugin.json
-├── commands/            # setup, review, task, spec, result, status, cancel
+├── commands/            # result, status, cancel (legacy flat command format)
+├── skills/              # setup, review, task, spec (rich SKILL.md workflows)
 ├── kiro-agents/         # Kiro custom agent definitions (JSON) — SSOT for permission specs
 │   ├── kiro-bridge-reviewer.json   # explicit trust on read tools, no write trust (Phase 1)
 │   ├── kiro-bridge-spec-writer.json# writes limited to under .kiro/specs/ (Phase 2)

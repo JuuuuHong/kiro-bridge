@@ -1,5 +1,6 @@
 {
   "name": "kiro-bridge",
+  "description": "Private marketplace for the kiro-bridge Claude Code plugin.",
   "owner": {
     "name": "JuuuuHong"
   },

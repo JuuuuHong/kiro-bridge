@@ -1,6 +1,6 @@
 {
   "name": "kiro-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Delegate review and research to Kiro CLI over ACP, with structured context handoff and a read-only-by-default trust boundary.",
   "author": {
     "name": "JuuuuHong"
