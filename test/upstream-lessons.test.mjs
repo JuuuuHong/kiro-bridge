@@ -3,13 +3,34 @@
 // the pre-fix code.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import * as jobs from '../scripts/lib/jobs.mjs'
 import { runWorker } from '../scripts/lib/task.mjs'
 import { bridgeError, CODES } from '../scripts/lib/errors.mjs'
+import { collectDiff, symlinkExclusionReason } from '../scripts/lib/git.mjs'
+import { CONFIG_DEFAULTS } from '../scripts/lib/config.mjs'
+import { isHelpRequest } from '../scripts/bridge.mjs'
+
+// A repo with one commit, awaited so the async body cannot outlive it.
+async function withRepo(fn) {
+  const dir = mkdtempSync(join(tmpdir(), 'kb-up-repo-'))
+  const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' })
+  try {
+    git('init', '-q', '.')
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'user.name', 'test')
+    writeFileSync(join(dir, 'base.txt'), 'base\n')
+    git('add', '-A')
+    git('commit', '-qm', 'init')
+    return await fn(dir, git)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
 
 // Awaited, so an async body cannot outlive the temp home it depends on.
 async function withTempHome(fn) {
@@ -119,4 +140,89 @@ test('a failure with no session leaves sessionId null rather than inventing one'
     await assert.rejects(runWorker(jobId, { cwd, runFn }))
     assert.equal(jobs.readJob(jobId, cwd).meta.sessionId, null)
   })
+})
+
+// --- A symlink must not smuggle an excluded file past the exclusion list ----
+//
+// The exclusion list matches the path git reports. A link named `notes.md`
+// pointing at `secrets/real.pem` passes that check, and the payload then tells
+// Kiro to read the path — its read tool follows the link, and the file the list
+// promised would never leave the machine leaves anyway.
+
+test('git: a symlink to an excluded file is withheld', async () => {
+  await withRepo(async (dir, git) => {
+    mkdirSync(join(dir, 'secrets'))
+    writeFileSync(join(dir, 'secrets', 'real.pem'), 'PRIVATE KEY\n')
+    symlinkSync('secrets/real.pem', join(dir, 'notes.md'))
+    writeFileSync(join(dir, 'normal.mjs'), 'ok\n')
+    git('add', '-A')
+
+    const r = await collectDiff({ cwd: dir, excludeFiles: CONFIG_DEFAULTS.redaction.excludeFiles })
+    assert.deepEqual(r.files.map((f) => f.path), ['normal.mjs'])
+    assert.ok(r.excludedFiles.includes('notes.md'), 'the link itself must be reported as withheld')
+  })
+})
+
+test('git: a symlink pointing outside the repository is withheld', async () => {
+  await withRepo(async (dir, git) => {
+    symlinkSync('/etc/hosts', join(dir, 'outside.md'))
+    writeFileSync(join(dir, 'normal.mjs'), 'ok\n')
+    git('add', '-A')
+
+    const r = await collectDiff({ cwd: dir, excludeFiles: [] })
+    assert.deepEqual(r.files.map((f) => f.path), ['normal.mjs'])
+    assert.ok(r.excludedFiles.includes('outside.md'))
+  })
+})
+
+test('git: an ordinary symlink inside the repo is still reviewable', async () => {
+  await withRepo(async (dir, git) => {
+    writeFileSync(join(dir, 'target.mjs'), 'export const a = 1\n')
+    symlinkSync('target.mjs', join(dir, 'alias.mjs'))
+    git('add', '-A')
+
+    const r = await collectDiff({ cwd: dir, excludeFiles: CONFIG_DEFAULTS.redaction.excludeFiles })
+    assert.deepEqual(r.files.map((f) => f.path).sort(), ['alias.mjs', 'target.mjs'])
+    assert.deepEqual(r.excludedFiles, [])
+  })
+})
+
+test('symlinkExclusionReason returns null for a plain file', async () => {
+  await withRepo(async (dir) => {
+    writeFileSync(join(dir, 'plain.mjs'), 'x\n')
+    assert.equal(symlinkExclusionReason('plain.mjs', { cwd: dir, excludeFiles: ['*.pem'] }), null)
+  })
+})
+
+// --- A request for usage must never become a delegated goal ----------------
+
+test('a bare help token is usage, not a goal that spends credits', () => {
+  for (const token of ['-h', '-?', 'help', '--help', '-H']) {
+    assert.equal(isHelpRequest([token]), true, `${token} must be treated as usage`)
+  }
+})
+
+test('a goal that merely mentions a flag still delegates', () => {
+  assert.equal(isHelpRequest(['fix', 'the', '-h', 'handling']), false)
+  assert.equal(isHelpRequest(['help', 'me', 'debug', 'this']), false)
+  assert.equal(isHelpRequest([]), false)
+})
+
+// --- A diff larger than the read buffer must be named, not a raw stack ------
+
+test('git: an oversized diff surfaces as a classified error', async () => {
+  const execFileFn = (_b, args, _o, cb) => {
+    if (args[0] === 'rev-parse') return cb(null, 'true\n', '')
+    const err = new Error('stdout maxBuffer length exceeded')
+    err.code = 'ENOBUFS'
+    return cb(err, '', '')
+  }
+  await assert.rejects(
+    collectDiff({ cwd: '/repo', execFileFn }),
+    (err) => {
+      assert.equal(err.code, CODES.PROTOCOL)
+      assert.match(err.details.reason, /exceeded .*MB/)
+      return true
+    },
+  )
 })

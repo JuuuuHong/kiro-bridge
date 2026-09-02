@@ -3,6 +3,8 @@
 // Principle: use only execFile, never assemble a shell string (design §3). ref
 // is user input, so it must only be passed as an argument array — `--` also blocks option injection.
 import { execFile } from 'node:child_process'
+import { lstatSync, realpathSync } from 'node:fs'
+import { resolve as resolvePath, relative, isAbsolute } from 'node:path'
 import { bridgeError, CODES } from './errors.mjs'
 import { isExcludedPath } from './context.mjs'
 
@@ -11,10 +13,59 @@ const MAX_BUFFER = 64 * 1024 * 1024
 function run(args, { cwd, execFileFn = execFile } = {}) {
   return new Promise((resolve, reject) => {
     execFileFn('git', args, { cwd, maxBuffer: MAX_BUFFER }, (err, stdout, stderr) => {
-      if (err) return reject(Object.assign(err, { stderr: String(stderr || '') }))
+      if (err) {
+        // A diff larger than the buffer arrives as a bare ENOBUFS, which would
+        // surface as an unclassified stack trace. Name it instead: the fix is
+        // to review a narrower ref, not to retry.
+        if (err.code === 'ENOBUFS') {
+          return reject(bridgeError(CODES.PROTOCOL, {
+            reason: `git output exceeded ${MAX_BUFFER / (1024 * 1024)}MB — review a narrower ref or a subset of the change`,
+          }))
+        }
+        return reject(Object.assign(err, { stderr: String(stderr || '') }))
+      }
       resolve(String(stdout))
     })
   })
+}
+
+// Why a symlink needs its own check: the exclusion list promises that certain
+// files never leave the machine, but it matches on the path git reports. A link
+// named `notes.md` pointing at `secrets/real.pem` passes that check, and the
+// payload then tells Kiro to read the path directly — its read tool follows the
+// link and the excluded file goes out anyway.
+//
+// So a symlink is judged by where it actually points: excluded if the target is
+// excluded, and excluded if the target leaves the repository at all, since a
+// review has no business reading outside the tree it was asked to review.
+// Returns a reason string when the path must not be handed over, else null.
+export function symlinkExclusionReason(path, { cwd = process.cwd(), excludeFiles = [] } = {}) {
+  const absolute = resolvePath(cwd, path)
+  let stat
+  try {
+    stat = lstatSync(absolute)
+  } catch {
+    return null // vanished between listing and inspection; nothing to hand over
+  }
+  if (!stat.isSymbolicLink()) return null
+
+  let target
+  let root
+  try {
+    target = realpathSync(absolute)
+    root = realpathSync(cwd)
+  } catch {
+    return 'symlink target could not be resolved'
+  }
+
+  const rel = relative(root, target)
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+    return 'symlink points outside the repository'
+  }
+  if (isExcludedPath(rel, excludeFiles)) {
+    return 'symlink target is an excluded file'
+  }
+  return null
 }
 
 export async function isGitRepo(options = {}) {
@@ -111,10 +162,14 @@ export async function collectDiff(options = {}) {
   ])
 
   const tracked = splitZ(nameOnly)
-  const allowedTracked = tracked.filter((path) => !isExcludedPath(path, excludeFiles))
-  const allowedUntracked = untracked.filter((path) => !isExcludedPath(path, excludeFiles))
-  const excludedFiles = [...tracked, ...untracked]
-    .filter((path) => isExcludedPath(path, excludeFiles))
+  // A path is withheld either because its own name matches an exclude pattern,
+  // or because it is a symlink whose target is excluded / outside the repo.
+  const cwd = options.cwd ?? process.cwd()
+  const isWithheld = (path) => isExcludedPath(path, excludeFiles)
+    || symlinkExclusionReason(path, { cwd, excludeFiles }) !== null
+  const allowedTracked = tracked.filter((path) => !isWithheld(path))
+  const allowedUntracked = untracked.filter((path) => !isWithheld(path))
+  const excludedFiles = [...tracked, ...untracked].filter(isWithheld)
   const diff = allowedTracked.length > 0
     ? await run(diffArgs(ref, false, allowedTracked), options)
     : ''

@@ -139,6 +139,19 @@ export function validateCommandFlags(command, flags) {
   }
 }
 
+// `task -h` must not become a delegated goal.
+//
+// `--help` is already rejected as an unknown flag, but a single-dash form is
+// not flag-shaped to the parser, so it fell through into the free-text goal and
+// spent real credits asking Kiro to act on the string "-h". Only an argument
+// list that is *nothing but* a help token counts, so a goal that legitimately
+// mentions a flag ("fix the -h handling") still delegates normally.
+const HELP_TOKENS = new Set(['-h', '-?', 'help', '--help'])
+
+export function isHelpRequest(positionals) {
+  return positionals.length === 1 && HELP_TOKENS.has(positionals[0].toLowerCase())
+}
+
 function assertSupportedRuntime() {
   const major = Number.parseInt(process.versions.node.split('.')[0], 10)
   if (!Number.isInteger(major) || major < 20) {
@@ -215,6 +228,13 @@ async function main(argv) {
   }
 
   validateCommandFlags(command, flags)
+
+  // Checked before any command body so no credit-spending path can be reached
+  // by what was plainly a request for usage.
+  if (isHelpRequest(flags._)) {
+    outWrite(USAGE)
+    return 0
+  }
 
   if (command === 'setup') {
     const result = await setup({ force: flags.force })
