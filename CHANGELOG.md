@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Large results are no longer silently truncated.** `bridge.mjs` wrote to
+  stdout and then called `process.exit()`. Writes to a *pipe* — how Claude Code
+  captures this process — are asynchronous and are not flushed by `exit()`, so
+  output was cut at the pipe buffer: a 116 KB `review --dry-run` payload
+  arrived as exactly 65,536 bytes. Truncation inside the trust fence also
+  dropped the closing `KIRO_EXTERNAL_DATA>>>` delimiter, breaking the external
+  data boundary. Every write is now tracked and awaited (bounded by
+  `FLUSH_TIMEOUT_MS`) before exiting.
+- **Session reuse can no longer silently degrade to a contextless turn.** The
+  one-shot subprocess transport ignores `sessionId`, so if ACP capability
+  detection flipped to `subprocess` (e.g. after a kiro-cli upgrade), `resume`
+  and `result --follow-up` would answer from an empty conversation while
+  reporting success. `transport.run` now rejects a `sessionId` on the
+  subprocess path, mirroring `acp.run`'s existing `loadSession` guard.
+- **`task --bg` now sends the same constraints as foreground `task`.** The
+  background worker omitted `TASK_CONSTRAINTS`, so adding `--bg` silently
+  dropped the "do not claim anything you could not confirm by reading it"
+  instruction.
+- **Subprocess metadata is bounded like the ACP path.** A stream-json line
+  carrying `_meta` was persisted as an arbitrary object; it is now reduced to a
+  valid `contextUsagePercentage` or degraded to a non-persisted `RAW` event.
+- **`setup` no longer exits non-zero on a healthy install.** A deliberate
+  non-overwrite of a user-modified agent file (`skipped`) was counted as a step
+  failure; it is now reported as a warning (`!`).
+- **JSON-RPC responses that echo the request id as a string now resolve.**
+  Pending requests are keyed by the id's string form instead of hanging until
+  the stream closes.
+- **Direct-invocation detection compares resolved real paths** instead of
+  basenames, so a same-named script elsewhere cannot be mistaken for the entry
+  point.
+
+### Changed
+
+- `renderAgent` now asserts that no tool in an agent's `deny` list appears in
+  its `trust` list. `deny` was previously never read by any code path; it is
+  now an enforced invariant rather than documentation (ADR-002).
+- `usage.jsonl` is bounded. New `pruneUsage()` applies the retention window and
+  a 5,000-record cap, swept opportunistically from `status` alongside
+  `gcJobs` — the log previously grew without limit and was read in full on
+  every `status`.
+- Removed the `toolNaming` config key. It was written by `setup` (last agent
+  wins) and never read; the resolved convention is already stamped per-agent in
+  each installed file's `_kiroBridge.toolSet`.
+- `commands/{result,resume,cancel}.md` now instruct shell-quoting of argument
+  values, matching the `spec`/`task` skills.
+
 ## [0.2.0] - 2026-09-01
 
 ### Added

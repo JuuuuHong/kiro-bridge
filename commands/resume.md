@@ -5,6 +5,9 @@ argument-hint: "<question> [--session <id>] [--model <id>] [--effort <lv>] [--ti
 
 Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" resume $ARGUMENTS`.
 
+- Shell-quote every argument value you pass (e.g. `"<question>"`).
+  Arguments are free-form text; unquoted `;`, backticks, or `$(...)`
+  would be interpreted by the shell rather than sent to Kiro.
 - With no `--session`, this repo's most recent resumable session is used.
 - `--session <id>` accepts either a record id (from a resume hint) or the raw
   ACP session id; the most recent matching session wins. Prefer the generated

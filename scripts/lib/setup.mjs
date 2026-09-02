@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 
 import { detectVersion, detectCapability, TRANSPORTS } from './transport/index.mjs'
 import { AGENT_DEFS, probeToolNaming, installAgent, agentsDir } from './agents.mjs'
-import { loadConfig, saveConfig } from './config.mjs'
+import { loadConfig } from './config.mjs'
 import { childEnvFromConfig } from './env.mjs'
 import { classifyOutput, CODES } from './errors.mjs'
 
@@ -98,9 +98,13 @@ export async function setup(options = {}) {
 
       const result = installAgent(probe.rendered, { dir, force })
       installed.push({ key, toolSet: probe.toolSet, ...result })
+      // A 'skipped' install is a deliberate non-overwrite (user-modified or
+      // unmanaged file), not a setup failure — surface it as a warning so it
+      // stays visible without turning a working install into exit code 1.
       steps.push({
         step: `agent:${key}`,
-        ok: result.action !== 'skipped',
+        ok: true,
+        ...(result.action === 'skipped' ? { warning: true } : {}),
         detail: `${result.action} (tool convention: ${probe.toolSet}) -> ${result.target}${result.reason ? ` — ${result.reason}` : ''}`,
       })
 
@@ -110,20 +114,18 @@ export async function setup(options = {}) {
     rmSync(scratch, { recursive: true, force: true })
   }
 
-  if (resolvedToolNaming) {
-    try {
-      const config = loadConfig()
-      saveConfig({ ...config, toolNaming: resolvedToolNaming })
-    } catch {
-      // Failure to record is not fatal.
-    }
-  }
-
-  return { ok: steps.every((s) => s.ok), steps, installed, capability }
+  // The resolved convention is stamped per-agent into each installed file's
+  // _kiroBridge.toolSet (read back by installAgent), so there is no separate
+  // config key to keep in sync.
+  return { ok: steps.every((s) => s.ok), steps, installed, capability, toolNaming: resolvedToolNaming }
 }
 
 export function formatSetup(result) {
-  const lines = result.steps.map((s) => `${s.ok ? '✓' : '✗'} ${s.step}: ${s.detail}`)
+  const mark = (s) => {
+    if (!s.ok) return '✗'
+    return s.warning ? '!' : '✓'
+  }
+  const lines = result.steps.map((s) => `${mark(s)} ${s.step}: ${s.detail}`)
   if (result.hint) lines.push('', result.hint)
   return lines.join('\n')
 }

@@ -80,6 +80,16 @@ export async function run(payload, options = {}) {
     return acp.run(payload, rest)
   }
   if (chosen === TRANSPORTS.SUBPROCESS) {
+    // The one-shot subprocess path has no session concept and silently ignores
+    // sessionId — a resume/follow-up routed here would answer from an empty
+    // conversation while the caller believes the prior context was reused.
+    // Fail loudly instead (mirrors acp.run's loadSession guard).
+    if (rest.sessionId) {
+      throw bridgeError(CODES.PROTOCOL, {
+        reason: 'session reuse requires the ACP transport, but only the one-shot subprocess transport is available',
+        sessionId: rest.sessionId,
+      })
+    }
     return subprocess.run(payload, rest)
   }
   throw bridgeError(CODES.TRANSPORT_UNAVAILABLE, { transport: chosen })

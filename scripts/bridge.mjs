@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 // Entry point. Only routes commands; logic lives in lib/ (design §3).
+import { realpathSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { review, formatSummary } from './lib/review.mjs'
 import { setup, formatSetup } from './lib/setup.mjs'
 import {
@@ -16,12 +18,47 @@ import { sanitizeTerminal } from './lib/sanitize.mjs'
 // embed model- and process-derived text, so sanitize at the write edge so no
 // escape sequence (cursor, screen, OSC 52 clipboard, title) can reach a TTY.
 // Findings bodies are already sanitized upstream; this is defence in depth.
+//
+// Writes to a *pipe* (how Claude Code captures this process) are asynchronous,
+// and process.exit() does not flush them — a large result is silently cut at
+// the pipe buffer, which can also drop the closing trust fence. Every write is
+// therefore tracked here and awaited by flushOutput() before we exit.
+const pendingWrites = []
+
+function trackedWrite(stream, text) {
+  const clean = sanitizeTerminal(text)
+  pendingWrites.push(new Promise((resolve) => {
+    try {
+      // The callback fires once the chunk is handed to the OS (or errors, e.g.
+      // EPIPE); either way the write is no longer pending for our purposes.
+      stream.write(clean, () => resolve())
+    } catch {
+      resolve()
+    }
+  }))
+}
+
 function outWrite(text) {
-  process.stdout.write(sanitizeTerminal(text))
+  trackedWrite(process.stdout, text)
 }
 
 function errWrite(text) {
-  process.stderr.write(sanitizeTerminal(text))
+  trackedWrite(process.stderr, text)
+}
+
+// Bounded: a reader that stops consuming must not hang the process forever.
+export const FLUSH_TIMEOUT_MS = 10_000
+
+export async function flushOutput(timeoutMs = FLUSH_TIMEOUT_MS) {
+  const writes = pendingWrites.splice(0)
+  if (writes.length === 0) return
+  let timer
+  const bound = new Promise((resolve) => {
+    timer = setTimeout(resolve, timeoutMs)
+    timer.unref?.()
+  })
+  await Promise.race([Promise.all(writes), bound])
+  clearTimeout(timer)
 }
 
 const USAGE = `kiro-bridge
@@ -267,11 +304,25 @@ async function main(argv) {
   return 2
 }
 
-const invokedDirectly = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop())
+// Compare resolved real paths rather than basenames: a same-named script
+// elsewhere on the filesystem must not be mistaken for this entry point.
+export function isDirectInvocation(argv1 = process.argv[1], moduleUrl = import.meta.url) {
+  if (!argv1) return false
+  try {
+    return realpathSync(argv1) === realpathSync(fileURLToPath(moduleUrl))
+  } catch {
+    return false
+  }
+}
 
-if (invokedDirectly) {
+async function exitAfterFlush(code) {
+  await flushOutput()
+  process.exit(code)
+}
+
+if (isDirectInvocation()) {
   main(process.argv.slice(2))
-    .then((code) => process.exit(code))
+    .then((code) => exitAfterFlush(code))
     .catch((err) => {
       if (err instanceof BridgeError) {
         errWrite(`[${err.code}] ${err.message}\n`)
@@ -281,10 +332,10 @@ if (invokedDirectly) {
         if (err.details?.partial) {
           errWrite(`\nPartial output:\n${err.details.partial}\n`)
         }
-        process.exit(1)
+        return exitAfterFlush(1)
       }
       errWrite(`${err?.stack || err}\n`)
-      process.exit(1)
+      return exitAfterFlush(1)
     })
 }
 

@@ -146,6 +146,13 @@ export function agentDefByName(name) {
 export function renderAgent(def, toolSet) {
   const names = TOOL_NAME_SETS[toolSet]
   if (!names) throw new Error(`unknown tool name set: ${toolSet}`)
+  // `deny` is not a Kiro schema key — denial is expressed by omission from the
+  // trust allowlist below. Assert the two agree so a future edit to `trust`
+  // cannot quietly grant a tool the agent is defined to never hold (ADR-002).
+  const leaked = (def.deny || []).filter((tool) => def.trust.includes(tool))
+  if (leaked.length > 0) {
+    throw new Error(`agent ${def.name} trusts denied tool(s): ${leaked.join(', ')}`)
+  }
   const rendered = {
     name: def.name,
     description: def.description,

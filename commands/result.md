@@ -5,6 +5,9 @@ argument-hint: "[job-id] [--follow-up <question>] [--model <id>] [--effort <lv>]
 
 Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" result $ARGUMENTS`.
 
+- Shell-quote every argument value you pass (e.g. `--follow-up "..."`).
+  Arguments are free-form text; unquoted `;`, backticks, or `$(...)`
+  would be interpreted by the shell rather than sent to Kiro.
 - If job-id is omitted, this repo's most recent job is used.
 - If it's still `running`, report that as-is and wait. Do not poll repeatedly.
 - `--follow-up` only works on jobs with a surviving ACP session. If it errors

@@ -203,7 +203,13 @@ export function normalizeStreamJsonLine(line) {
     }
     if (obj.sessionUpdate) return normalizeAcpUpdate(obj)
     if (obj.type === 'metadata' || obj._meta) {
-      return { type: EVENT_TYPES.METADATA, meta: obj._meta || obj }
+      // Same bounded contract as the ACP path: keep only a valid 0..100
+      // contextUsagePercentage, never an arbitrary object. A metadata line
+      // carrying no valid percentage degrades to RAW, which is not persisted.
+      const pct = pctFromContainer(obj._meta) ?? pctFromContainer(obj)
+      return pct === null
+        ? { type: EVENT_TYPES.RAW, raw: obj }
+        : { type: EVENT_TYPES.METADATA, contextUsagePercentage: pct }
     }
     const text = textOf(obj)
     if (detectDenial(text)) return { type: EVENT_TYPES.DENIED, text }

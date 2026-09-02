@@ -37,9 +37,12 @@ export class JsonRpcClient {
     }
 
     if (msg.id != null && (msg.result !== undefined || msg.error !== undefined)) {
-      const entry = this.#pending.get(msg.id)
+      // Key on the string form: an agent that echoes our numeric id back as a
+      // string would otherwise never match, leaving the request hanging until
+      // the stream closes.
+      const entry = this.#pending.get(String(msg.id))
       if (!entry) return
-      this.#pending.delete(msg.id)
+      this.#pending.delete(String(msg.id))
       if (msg.error) {
         entry.reject(bridgeError(CODES.PROTOCOL, { rpc: msg.error }))
       } else {
@@ -89,7 +92,7 @@ export class JsonRpcClient {
     }
     const id = this.#nextId++
     const promise = new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject })
+      this.#pending.set(String(id), { resolve, reject })
     })
     this.#send({ jsonrpc: '2.0', id, method, params })
     return promise

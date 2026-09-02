@@ -16,7 +16,7 @@ import { AGENT_DEFS } from './agents.mjs'
 import { bridgeError, BridgeError, CODES } from './errors.mjs'
 import * as jobs from './jobs.mjs'
 import * as sessions from './sessions.mjs'
-import { recordUsage, readUsage, formatUsage } from './usage.mjs'
+import { recordUsage, readUsage, formatUsage, pruneUsage } from './usage.mjs'
 import {
   review as runReview,
   formatSummary as formatReviewSummary,
@@ -356,6 +356,9 @@ const WORKER_EXECUTORS = {
       kind: 'task',
       goal,
       agentDef: pickAgent({ write }),
+      // Must mirror the foreground task payload exactly (see task()) — otherwise
+      // adding --bg silently drops the no-unverified-claims constraint.
+      constraints: TASK_CONSTRAINTS,
       cwd,
       timeoutMs: timeoutMs || DEFAULT_TIMEOUT_MS,
       model,
@@ -479,6 +482,9 @@ export async function result(options = {}) {
 export function status({ cwd = process.cwd(), config = loadConfig(), now = Date.now(), identityFn } = {}) {
   jobs.reapOrphans(cwd, { now, ...(identityFn ? { identityFn } : {}) })
   const removed = jobs.gcJobs({ cwd, retentionDays: config.logRetentionDays, now })
+  // The usage log is append-only and global (not cwd-scoped), so bound it on
+  // the same opportunistic sweep that prunes jobs.
+  try { pruneUsage({ retentionDays: config.logRetentionDays, now }) } catch {}
   const list = jobs.listJobs({ cwd })
   const withHealth = list.map((job) => ({ ...job, health: jobs.classifyHealth(job, { now }) }))
   return { jobs: withHealth, gcRemoved: removed, usage: readUsage() }
