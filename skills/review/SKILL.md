@@ -28,6 +28,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" review [ref] [flags]
 | `--effort <lv>` | Override effort (`low`, `medium`, `high`, `xhigh`, or `max`) |
 | `--timeout <ms>` | Default 180000 |
 | `--quiet` | Suppress progress output (stderr) |
+| `--json` | Emit a machine-readable envelope instead of the human summary. Failures share the shape via `ok: false`. Agent output stays marked `"external": true`; insert the fenced `wrapped` string, not `findings` |
 
 Progress goes to stderr and successful results to stdout. Parse stdout on success;
 on a non-zero exit, inspect stderr for the bracketed error code described below.

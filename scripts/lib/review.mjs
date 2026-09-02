@@ -71,7 +71,7 @@ export async function review(options = {}) {
     signal,
     runFn = transport.run,
     collectDiffFn = collectDiff,
-    config = loadConfig(),
+    config = loadConfig(cwd),
     // Foreground review registers its successful resumable ACP turn. The
     // background worker leaves this false and registers only after its atomic
     // completeJob returns 'done' (see task.mjs runWorker), so a cancel-first
@@ -199,6 +199,9 @@ export async function review(options = {}) {
     ref: usedRef,
     adversarial,
     untracked,
+    // Reported so callers (and the --json envelope) agree with the agent name
+    // already stamped into the trust-fence header by wrapForClaude.
+    agent,
     transport: res.transport,
     sessionId: res.sessionId,
     parsed,

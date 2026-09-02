@@ -44,7 +44,7 @@ export async function resume(options = {}) {
     onPermissionRequest,
     signal,
     runFn = transport.run,
-    config = loadConfig(),
+    config = loadConfig(cwd),
   } = options
 
   if (!question || !String(question).trim()) {

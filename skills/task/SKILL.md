@@ -23,6 +23,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" task "<goal>" [flags]
 | `--dry-run` | Preview the payload without sending it |
 | `--model` / `--effort` | Override Kiro's model/effort level. Default is auto |
 | `--timeout <ms>` | Default 600000 |
+| `--json` | Emit a machine-readable envelope instead of the human summary. Failures share the shape via `ok: false`. Agent output stays marked `"external": true`; insert the fenced `wrapped` string, not `findings` |
 
 ## Permission rules (ADR-002)
 

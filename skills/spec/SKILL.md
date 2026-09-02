@@ -20,6 +20,10 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" spec "<feature description>" [fl
 Default model is auto, but since spec quality depends on refinement, using
 `--model` for a higher-tier model and `--effort high` is recommended.
 
+`--json` emits a machine-readable envelope instead of the human summary, with
+failures sharing the shape via `ok: false`. Agent output stays marked
+`"external": true`; insert the fenced `wrapped` string, not `findings`.
+
 ## Post-completion workflow — follow this strictly
 
 1. **Read** the files generated under `.kiro/specs/`.

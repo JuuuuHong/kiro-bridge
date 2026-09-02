@@ -30,7 +30,7 @@ export const DEFAULT_TIMEOUT_MS = 600_000 // design §8 failure mode table (task
 // (sessionId null) produces no record. Returns the new recordId or null. Never
 // throws: registration must never fail an already-succeeded delegated call.
 export function registerResumable({
-  res, agentDef, kind, command, write = false, cwd, config = loadConfig(),
+  res, agentDef, kind, command, write = false, cwd, config = loadConfig(cwd),
 }) {
   if (!res || !res.sessionId) return null
   const record = sessions.registerSession(
@@ -86,7 +86,7 @@ export async function runDelegated({
   onPermissionRequest,
   signal,
   runFn = transport.run,
-  config = loadConfig(),
+  config = loadConfig(cwd),
   command = kind,
   // Foreground callers register the successful resumable turn here. The
   // background worker MUST leave this false and register only after its atomic
@@ -425,7 +425,7 @@ export async function result(options = {}) {
   const agentDef = job.meta.command === 'review'
     ? AGENT_DEFS.reviewer
     : pickAgent({ write: Boolean(job.meta.payloadOptions?.write) })
-  const config = loadConfig()
+  const config = loadConfig(cwd)
   const { payload } = buildTaskPayload({ goal: followUp, config })
 
   const startedAt = Date.now()
@@ -479,7 +479,7 @@ export async function result(options = {}) {
   }
 }
 
-export function status({ cwd = process.cwd(), config = loadConfig(), now = Date.now(), identityFn } = {}) {
+export function status({ cwd = process.cwd(), config = loadConfig(cwd), now = Date.now(), identityFn } = {}) {
   jobs.reapOrphans(cwd, { now, ...(identityFn ? { identityFn } : {}) })
   const removed = jobs.gcJobs({ cwd, retentionDays: config.logRetentionDays, now })
   // The usage log is append-only and global (not cwd-scoped), so bound it on

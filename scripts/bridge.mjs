@@ -202,6 +202,9 @@ function emit(flags, text, envelopeFn) {
 let invocation = { command: null, json: false }
 
 async function main(argv) {
+  // Recorded from the raw argv *before* parsing: a --json caller whose
+  // arguments fail to parse must still get a JSON error, not a stack trace.
+  invocation = { command: argv[0] ?? null, json: argv.includes('--json') }
   assertSupportedRuntime()
   const { command, flags } = parseArgs(argv)
   invocation = { command: command ?? null, json: Boolean(flags.json) }

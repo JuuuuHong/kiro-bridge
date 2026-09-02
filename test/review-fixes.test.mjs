@@ -13,7 +13,7 @@ import { normalizeStreamJsonLine, EVENT_TYPES } from '../scripts/lib/transport/e
 import { JsonRpcClient } from '../scripts/lib/transport/jsonrpc.mjs'
 import { renderAgent, AGENT_DEFS } from '../scripts/lib/agents.mjs'
 import { pruneUsage, usagePath } from '../scripts/lib/usage.mjs'
-import { runWorker } from '../scripts/lib/task.mjs'
+import { runWorker, runDelegated } from '../scripts/lib/task.mjs'
 import * as jobs from '../scripts/lib/jobs.mjs'
 
 const BRIDGE = join(dirname(dirname(fileURLToPath(import.meta.url))), 'scripts', 'bridge.mjs')
@@ -459,4 +459,85 @@ test('json: failures use the same envelope with ok:false', () => {
 test('json: every envelope is serializable and round-trips', () => {
   const env = resultJson({ empty: true, message: 'No jobs in this repository.' })
   assert.deepEqual(JSON.parse(JSON.stringify(env)), env)
+})
+
+// --- self-review of the 0.3.0 additions ---
+
+import { review } from '../scripts/lib/review.mjs'
+import { statusJson } from '../scripts/lib/json-output.mjs'
+
+const fakeRun = async () => ({
+  transport: 'acp', sessionId: 's1', result: '{"findings":[],"summary":"ok"}', metadata: null,
+})
+const fakeDiff = async (opts) => {
+  fakeDiff.lastExcludeFiles = opts.excludeFiles
+  return { diff: 'diff', files: [{ path: 'a.js' }], excludedFiles: [], untracked: [], ref: 'HEAD' }
+}
+
+test('review: reports the agent it actually used', async () => {
+  await withTempHome(async () => {
+    const res = await review({ cwd: process.cwd(), runFn: fakeRun, collectDiffFn: fakeDiff })
+    assert.equal(res.agent, 'kiro-bridge-reviewer')
+    // The envelope must agree with the name stamped into the fence header.
+    assert.match(res.wrapped, /source: kiro-bridge-reviewer/)
+  })
+})
+
+test('config: the overlay follows the cwd the command was given, not process.cwd()', async () => {
+  await withTempHome(async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'kb-cwd-'))
+    try {
+      writeProjectConfig(cwd, { redaction: { excludeFiles: ['only-in-this-repo.js'] } })
+      await review({ cwd, dryRun: true, runFn: fakeRun, collectDiffFn: fakeDiff })
+      assert.ok(
+        fakeDiff.lastExcludeFiles.includes('only-in-this-repo.js'),
+        'project overlay was resolved from process.cwd() instead of the given cwd',
+      )
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+})
+
+test('json: status summarizes the usage log rather than dumping every record', () => {
+  const usage = Array.from({ length: 300 }, () => ({ command: 'review', ok: true, durationMs: 10 }))
+  const env = statusJson({ jobs: [], gcRemoved: [], usage })
+  assert.equal(Array.isArray(env.usage), false)
+  assert.equal(env.usage.total, 300)
+  assert.equal(env.usage.byCommand.review.calls, 300)
+})
+
+test('bridge: --json is honoured even when argument parsing fails', async () => {
+  const out = await new Promise((resolve) => {
+    execFile(process.execPath, [BRIDGE, 'review', '--json', '--bogus-flag'], (err, stdout) => resolve(stdout))
+  })
+  const env = JSON.parse(out)
+  assert.equal(env.ok, false)
+  assert.equal(env.command, 'review')
+  assert.match(env.error.message, /unknown flag/)
+})
+
+test('config: runDelegated redacts using the overlay from its own cwd', async () => {
+  await withTempHome(async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'kb-deleg-'))
+    try {
+      writeProjectConfig(cwd, { redaction: { privateHosts: ['internal.example.com'] } })
+      let sent = null
+      await runDelegated({
+        kind: 'task',
+        goal: 'check https://api.internal.example.com/health',
+        agentDef: { name: 'kiro-bridge-researcher' },
+        cwd,
+        runFn: async (payload) => {
+          sent = payload
+          return { transport: 'acp', sessionId: null, result: '{}', metadata: null }
+        },
+      })
+      // The host must be masked because the overlay was read from `cwd`.
+      assert.match(sent.goal, /\[REDACTED:private-host\]/)
+      assert.ok(!sent.goal.includes('internal.example.com'))
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
 })

@@ -39,6 +39,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Self-review of the additions above.** Four defects found by reviewing the
+  new code with the same pass applied to 0.2.0:
+  - The project overlay was resolved from `process.cwd()` while commands
+    operate on an explicitly passed `cwd`. Any caller whose `cwd` differed
+    silently got no project config at all. Every site now loads it from the
+    same `cwd` the command was given.
+  - `review` never reported the agent it used, so the `--json` envelope said
+    `"agent": null` while the trust-fence header it carried said
+    `kiro-bridge-reviewer`. The envelope now agrees with the fence.
+  - `status --json` dumped every raw usage record (capped at 5,000) where the
+    text path prints a summary. It now summarizes in both formats.
+  - `--json` was read from parsed flags, so a caller whose arguments failed to
+    parse got a text stack trace instead of a JSON error. It is now detected
+    from the raw argv before parsing.
 - **`review` no longer fails with a raw git error in a repository with no
   commits.** `git diff HEAD` cannot resolve HEAD before the first commit, so a
   fresh repo whose files are all untracked — the "only new files created" case

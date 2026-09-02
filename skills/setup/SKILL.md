@@ -9,7 +9,7 @@ argument-hint: "[--force]"
 ## Running it
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" setup [--force]
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" setup [--force] [--json]
 ```
 
 Prints `✓`/`✗` per step. Stops on version or authentication failure;
