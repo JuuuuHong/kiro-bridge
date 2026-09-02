@@ -340,6 +340,16 @@ export async function runWorker(jobId, { cwd = process.cwd(), runFn, collectDiff
     return { ...result, sessionRecordId }
   } catch (err) {
     const message = err instanceof BridgeError ? `[${err.code}] ${err.message}` : String(err?.stack || err)
+    // A turn that died to a throttle, timeout, or tool denial still consumed
+    // credits, and the ACP session it opened is still resumable on Kiro's side —
+    // the transport puts its sessionId on the error. Persisting it before
+    // failing means `result --follow-up` can pick the conversation back up
+    // instead of paying to redo the work from scratch. Best-effort and ahead of
+    // failJob, since a terminal status must not block on this.
+    const failedSessionId = err?.details?.sessionId
+    if (failedSessionId) {
+      try { jobs.updateMeta(jobId, { sessionId: failedSessionId }, cwd) } catch {}
+    }
     // A startup lock timeout may still have a live holder. Keep this best-effort
     // and bounded; reapOrphans remains the final self-healing fallback.
     try { jobs.failJob(jobId, message, cwd, { timeoutMs: 250 }) } catch {}

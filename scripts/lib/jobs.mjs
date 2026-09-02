@@ -463,9 +463,36 @@ export function reapOrphans(cwd = process.cwd(), options = {}) {
   return reaped
 }
 
+// Signal the worker *and everything it started*.
+//
+// The worker is spawned detached, which on POSIX makes it a process-group
+// leader, so its kiro-cli child lives in the same group. Signalling the bare
+// pid kills only the worker — the worker has no SIGTERM handler, so it dies
+// instantly without ever terminating kiro-cli, which is left orphaned and keeps
+// spending credits while cancel reports success. Signalling the negative pid
+// delivers to the whole group instead.
+//
+// Falls back to the bare pid when the group signal is not possible: Windows has
+// no POSIX process groups, and ESRCH means the group is already gone.
+export function killProcessTree(pid, signal = 'SIGTERM', { kill = process.kill } = {}) {
+  try {
+    kill(-pid, signal)
+    return true
+  } catch (err) {
+    if (err?.code === 'ESRCH') return false
+    // EPERM/EINVAL/ENOSYS (or Windows) — fall through to the single-pid signal.
+  }
+  try {
+    kill(pid, signal)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function cancelJob(jobId, {
   cwd = process.cwd(),
-  killFn = (pid) => process.kill(pid, 'SIGTERM'),
+  killFn = (pid) => killProcessTree(pid, 'SIGTERM'),
   identityFn = processIdentity,
 } = {}) {
   if (!isValidJobId(jobId)) return { ok: false, reason: `unknown job: ${jobId}` }
