@@ -316,8 +316,10 @@ Open Questions — 2026-09-01 measurement results (kiro-cli 2.20.1):
    format via the agent prompt. To be confirmed on `/kiro-bridge:spec`'s
    first real-world use.
 4. ~~Canonical tool names~~ **Resolved**: the `short` convention
-   (`read`/`write`/`shell`) passes validate. Auto-confirmed by the setup probe
-   (`toolNaming: short` cached).
+   (`read`/`write`/`shell`) passes validate. Auto-confirmed by the setup probe.
+   The resolved convention is now stamped per-agent into each installed file's
+   `_kiroBridge.toolSet` rather than cached under a separate config key, so
+   there is no second copy to drift (see `setup.mjs`).
 5. ~~ACP framing~~ **Resolved**: real round trip succeeded via ndjson
    (`jsonrpc.mjs` unmodified).
 6. ~~`session/update` discriminator~~ **Resolved**: `events.mjs`
