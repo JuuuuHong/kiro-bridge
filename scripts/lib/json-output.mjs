@@ -123,8 +123,12 @@ export function statusJson(res) {
   })
 }
 
+// `sessionId` (and the `command` built from it) originate in Kiro's session/new
+// response, so this envelope does carry agent-supplied data even though no
+// prose or findings are involved. It is marked external for that reason: the id
+// is shape-validated (sessions.isValidSessionId), not vouched for.
 export function transferJson(result) {
-  return base('transfer', { external: false, ...result })
+  return base('transfer', { external: true, notice: JSON_NOTICE, ...result })
 }
 
 export function cancelJson(res) {

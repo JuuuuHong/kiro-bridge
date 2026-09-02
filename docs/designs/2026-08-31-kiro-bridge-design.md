@@ -24,7 +24,13 @@ handshake). Using it as the primary transport gives us:
 - Cancellation (`session/cancel`), session reuse (`session/load`, no need to resend context on follow-up questions)
 - **Permission brokering**: `session/request_permission` from Kiro is mediated
   by Claude Code's own judgment. A more capable, interactive permission model
-  than a static trust list.
+  than a static trust list. **Status (2026-09-02): transport-only.** acp.mjs
+  implements the reverse-request path and every library entry point threads an
+  `onPermissionRequest` handler, but no CLI command supplies one, so requests
+  are auto-denied (the ADR-002 safe default). Agents pre-trust the read tools
+  they need, so no shipped flow depends on brokering. Wiring an actual decision
+  path is Phase 3 — the CLI runs non-interactively under Claude Code, so it
+  needs a decision channel that does not assume a TTY.
 
 A one-shot subprocess call ends after a single request-response round trip, so
 none of the above four are structurally possible.

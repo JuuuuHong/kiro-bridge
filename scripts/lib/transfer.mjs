@@ -24,6 +24,17 @@ export function transfer({ selector, cwd = process.cwd() } = {}) {
         : 'no resumable ACP session found in this repository',
     })
   }
+  // Defence in depth. sessions.sanitizeRecord already refuses to store a
+  // sessionId containing anything shell-meaningful, so this can only fire if
+  // that guard is bypassed or regressed. Since the whole point of this command
+  // is to hand the user a line to run, failing closed is the only safe
+  // behaviour: never render a command built from an id we cannot vouch for.
+  if (!sessions.isValidSessionId(record.sessionId)) {
+    throw bridgeError(CODES.PROTOCOL, {
+      reason: `refusing to render a run command for a malformed session id (record ${record.recordId})`,
+    })
+  }
+
   return {
     recordId: record.recordId,
     sessionId: record.sessionId,

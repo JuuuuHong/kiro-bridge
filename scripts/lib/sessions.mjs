@@ -36,6 +36,28 @@ export const LIMITS = {
   kind: 32,
 }
 
+// A sessionId is agent-supplied: it arrives verbatim in the `session/new`
+// response, so it is external data (ADR-004) and never inherently trustworthy.
+// It is also the one stored field that later gets rendered into a command line
+// the user is invited to run (`kiro-cli chat --resume-id <id>`, see
+// transfer.mjs). Constrain it to an opaque token charset here, at the single
+// point where it enters persistent state, so no shell metacharacter, quote,
+// whitespace, or control byte can ever reach that rendering. A value outside
+// this shape is rejected — never escaped or truncated — because a mangled id
+// would resume the wrong session.
+// The charset is chosen to be permissive about *format* (UUID, ULID, base64url,
+// standard base64, opaque vendor strings all pass) while excluding every
+// character that carries meaning to a shell: no whitespace, quotes, backslash,
+// `;`, `|`, `&`, `$`, backtick, redirection, glob, or brace/tilde expansion.
+const SESSION_ID_RE = /^[A-Za-z0-9._:+/=@-]+$/
+
+export function isValidSessionId(value) {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= LIMITS.sessionId
+    && SESSION_ID_RE.test(value)
+}
+
 // Only ACP turns are resumable. A subprocess/one-shot turn has no session to
 // reuse, so it must never produce a record.
 export const RESUMABLE_TRANSPORT = 'acp'
@@ -118,6 +140,9 @@ export function sanitizeRecord(input) {
 
   const sessionId = boundedString(input.sessionId, LIMITS.sessionId)
   if (!sessionId) return null // a record with no session is not resumable
+  // Shape check, not just length: see SESSION_ID_RE. Applied on both write and
+  // read, so a hand-edited record file cannot smuggle one in either.
+  if (!isValidSessionId(sessionId)) return null
 
   const agent = boundedString(input.agent, LIMITS.agent)
   if (!agent) return null

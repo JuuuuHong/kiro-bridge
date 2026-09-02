@@ -334,7 +334,7 @@ test('git: ref is passed only as an argument array and never touches a shell', a
     calls.push({ bin, args })
     if (args[0] === 'rev-parse' && args[1] === '--is-inside-work-tree') return cb(null, 'true\n', '')
     if (args[0] === 'rev-parse') return cb(null, 'abc\n', '')
-    if (args.includes('--name-only')) return cb(null, 'src/a.mjs\n', '')
+    if (args.includes('--name-only')) return cb(null, 'src/a.mjs\0', '')
     return cb(null, 'diff text\n', '')
   }
   await collectDiff({ ref: 'main; rm -rf /', execFileFn })
@@ -379,7 +379,7 @@ test('review: empty only when there really are no changes at all', async () => {
 test('git: untracked collects only paths, never content', async () => {
   const execFileFn = (_b, args, _o, cb) => {
     if (args[0] === 'rev-parse' && args[1] === '--is-inside-work-tree') return cb(null, 'true\n', '')
-    if (args[0] === 'ls-files') return cb(null, 'brand-new.mjs\n', '')
+    if (args[0] === 'ls-files') return cb(null, 'brand-new.mjs\0', '')
     if (args.includes('--name-only')) return cb(null, '', '')
     return cb(null, '', '')
   }
@@ -410,7 +410,7 @@ test('review: excluded tracked files never enter payload.diff', async () => {
     calls.push(args)
     if (args[0] === 'rev-parse') return cb(null, 'true\n', '')
     if (args[0] === 'ls-files') return cb(null, '', '')
-    if (args.includes('--name-only')) return cb(null, '.env\n', '')
+    if (args.includes('--name-only')) return cb(null, '.env\0', '')
     return cb(null, `diff --git a/.env b/.env\n+SERVICE_TOKEN=${secret}\n`, '')
   }
 
@@ -494,7 +494,7 @@ test('errors: throttled guidance points to the installed command namespace', () 
 test('git: excluded untracked files are separated from reviewable files', async () => {
   const execFileFn = (_bin, args, _opts, cb) => {
     if (args[0] === 'rev-parse') return cb(null, 'true\n', '')
-    if (args[0] === 'ls-files') return cb(null, '.env\nsrc/new.mjs\n', '')
+    if (args[0] === 'ls-files') return cb(null, '.env\0src/new.mjs\0', '')
     if (args.includes('--name-only')) return cb(null, '', '')
     return cb(null, '', '')
   }

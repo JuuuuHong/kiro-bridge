@@ -38,9 +38,21 @@ export async function resolveRef(ref, options = {}) {
   }
 }
 
+// Split a NUL-delimited git path list. `-z` output is the only form that is
+// safe to parse: the newline-delimited default C-quotes any path that is not
+// plain ASCII (core.quotePath, on by default), so a path like `인증서.pem`
+// arrives as the literal 25-character string `"\354\235\270...pem"`. That
+// string matches no file on disk and no `*.pem` exclude pattern — the file
+// silently drops out of the diff *and* out of the exclusion audit. NUL
+// delimiting also removes any ambiguity for paths containing newlines.
+function splitZ(out) {
+  return String(out).split('\0').filter((path) => path !== '')
+}
+
 function diffArgs(ref, nameOnly, paths = null) {
   const base = ['diff']
-  if (nameOnly) base.push('--name-only')
+  // -z implies raw (unquoted) paths, so it must accompany every --name-only read.
+  if (nameOnly) base.push('--name-only', '-z')
   // Compare against ref if given, otherwise against HEAD (staged + unstaged).
   base.push(ref || 'HEAD')
   base.push('--')
@@ -52,11 +64,11 @@ function diffArgs(ref, nameOnly, paths = null) {
 
 // New files that haven't been added yet. These never show up in `git diff`,
 // so without collecting them separately, a review of "only new files created" would silently come back empty.
-// .gitignore is respected (--exclude-standard).
+// .gitignore is respected (--exclude-standard). -z for the same reason as diffArgs.
 export async function listUntracked(options = {}) {
   try {
-    const out = await run(['ls-files', '--others', '--exclude-standard'], options)
-    return out.split('\n').map((l) => l.trim()).filter(Boolean)
+    const out = await run(['ls-files', '--others', '--exclude-standard', '-z'], options)
+    return splitZ(out)
   } catch {
     return []
   }
@@ -98,10 +110,7 @@ export async function collectDiff(options = {}) {
     ref ? Promise.resolve([]) : listUntracked(options),
   ])
 
-  const tracked = nameOnly
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
+  const tracked = splitZ(nameOnly)
   const allowedTracked = tracked.filter((path) => !isExcludedPath(path, excludeFiles))
   const allowedUntracked = untracked.filter((path) => !isExcludedPath(path, excludeFiles))
   const excludedFiles = [...tracked, ...untracked]

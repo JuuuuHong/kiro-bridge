@@ -16,11 +16,16 @@ because that path doesn't hold up on two axes:
 first-class subcommand (`kiro-cli acp`). Using it as the primary transport,
 instead of a one-shot call, unlocks streaming progress
 (`session/update` — Kiro's tool calls become visible in real time),
-cancellation (`session/cancel`), session reuse (`session/load` — no context
-resend on follow-ups), and permission brokering (`session/request_permission`
-mediated by Claude Code's own judgment, an interactive model beyond a static
-trust list). None of these are structurally possible over a single
+cancellation (`session/cancel`), and session reuse (`session/load` — no context
+resend on follow-ups). None of these are structurally possible over a single
 request-response round trip.
+
+Permission brokering (`session/request_permission` mediated by Claude Code's
+own judgment rather than a static trust list) is the fourth thing ACP makes
+possible, and the transport implements the reverse-request path for it — but no
+command wires a decision handler yet, so today every such request is
+auto-denied. Agents pre-trust the read tools they need (ADR-002), so the
+shipped flows do not depend on it. Interactive brokering is Phase 3.
 
 **Structured context handoff with trust-boundary wrapping.** Instead of a
 prompt string, kiro-bridge hands over a structured payload — diff, relevant
