@@ -35,6 +35,9 @@ function delegationFields(result) {
     wrapped: result.wrapped ?? null,
     redactions: result.redactions ?? [],
     excludedFiles: result.excludedFiles ?? [],
+    // Changed files omitted by the payload file cap. Non-zero means the file
+    // list is partial — never treat it as the complete set of changes.
+    droppedFiles: result.droppedFiles ?? 0,
     sessionRecordId: result.sessionRecordId ?? null,
   }
 }
@@ -47,6 +50,7 @@ function dryRunFields(result) {
     payload: result.payload,
     redactions: result.redactions ?? [],
     excludedFiles: result.excludedFiles ?? [],
+    droppedFiles: result.droppedFiles ?? 0,
   }
 }
 

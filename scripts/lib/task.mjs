@@ -95,13 +95,13 @@ export async function runDelegated({
   register = false,
   write = false,
 }) {
-  const { payload, redactions, excludedFiles } = buildPayload(
+  const { payload, redactions, excludedFiles, droppedFiles } = buildPayload(
     { kind, goal, constraints },
     { redaction: config.redaction },
   )
 
   if (dryRun) {
-    return { dryRun: true, payload, redactions, excludedFiles, agent: agentDef.name }
+    return { dryRun: true, payload, redactions, excludedFiles, droppedFiles, agent: agentDef.name }
   }
 
   const startedAt = Date.now()
@@ -152,6 +152,7 @@ export async function runDelegated({
     wrapped: wrapForClaude(parsed, { agent: agentDef.name, webDerived: Boolean(agentDef.webDerived) }),
     redactions,
     excludedFiles,
+    droppedFiles,
     metadata: res.metadata,
     sessionRecordId,
   }

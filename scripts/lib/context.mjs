@@ -151,6 +151,7 @@ export function buildPayload(input, options = {}) {
 
   const redactions = []
   const excluded = []
+  let droppedFiles = 0
   const scrub = (value, where, max) => {
     if (value == null) return undefined
     const clean = stripControlChars(String(value))
@@ -165,19 +166,31 @@ export function buildPayload(input, options = {}) {
     payload.diff = scrub(input.diff, 'diff', LIMITS.diff)
   }
 
+  // Exclusion runs before the count cap, not inside it. Capping first would let
+  // excluded paths consume the budget — 50 leading .env files would push every
+  // reviewable file out of a review that then looks merely "large".
   if (Array.isArray(input.files) && input.files.length > 0) {
-    const kept = []
-    for (const file of input.files.slice(0, LIMITS.files)) {
+    const candidates = []
+    for (const file of input.files) {
       if (!file || !file.path) continue
       if (isExcludedPath(file.path, excludeFiles)) {
         excluded.push(file.path)
         continue
       }
+      candidates.push(file)
+    }
+
+    // The cap is a real limit, but a silently shortened file list reads to the
+    // caller as "these are all the changed files". Report the overflow so the
+    // omission is visible (design §9: no silent caps).
+    droppedFiles = Math.max(0, candidates.length - LIMITS.files)
+
+    const kept = candidates.slice(0, LIMITS.files).map((file) => {
       const entry = { path: file.path }
       if (file.reason) entry.reason = scrub(file.reason, `files[${file.path}].reason`, LIMITS.constraint)
       if (file.excerpt) entry.excerpt = scrub(file.excerpt, `files[${file.path}].excerpt`, LIMITS.excerpt)
-      kept.push(entry)
-    }
+      return entry
+    })
     if (kept.length > 0) payload.files = kept
   }
 
@@ -198,5 +211,5 @@ export function buildPayload(input, options = {}) {
       .filter(Boolean)
   }
 
-  return { payload, redactions, excludedFiles: excluded }
+  return { payload, redactions, excludedFiles: excluded, droppedFiles }
 }

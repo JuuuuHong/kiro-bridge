@@ -3,7 +3,7 @@
 // This file only assembles. redaction is context.mjs's job, the trust
 // boundary is findings.mjs's job, and failure classification is errors.mjs's job.
 import { collectDiff } from './git.mjs'
-import { buildPayload } from './context.mjs'
+import { buildPayload, LIMITS } from './context.mjs'
 import { parseResponse, wrapForClaude } from './findings.mjs'
 import { loadConfig } from './config.mjs'
 import * as transport from './transport/index.mjs'
@@ -115,6 +115,7 @@ export async function review(options = {}) {
     payload,
     redactions,
     excludedFiles: payloadExcluded,
+    droppedFiles,
   } = buildPayload(
     { kind: 'review', goal: outboundGoal, diff, files, constraints },
     { redaction: config.redaction },
@@ -135,7 +136,7 @@ export async function review(options = {}) {
 
   // Path for a human to inspect the payload right before it's sent (design §7).
   if (dryRun) {
-    return { dryRun: true, adversarial, payload, redactions, excludedFiles, untracked, ref: usedRef }
+    return { dryRun: true, adversarial, payload, redactions, excludedFiles, droppedFiles, untracked, ref: usedRef }
   }
 
   const agent = `${AGENT_PREFIX}reviewer`
@@ -209,6 +210,7 @@ export async function review(options = {}) {
     wrapped: wrapForClaude(parsed, { agent }),
     redactions,
     excludedFiles,
+    droppedFiles,
     metadata: res.metadata,
     sessionRecordId,
   }
@@ -232,6 +234,9 @@ export function formatSummary(result) {
     if (result.untracked?.length > 0) {
       lines.push(`untracked (path only): ${result.untracked.join(', ')}`)
     }
+    if (result.droppedFiles > 0) {
+      lines.push(`NOTE: ${result.droppedFiles} more changed file(s) exceeded the ${LIMITS.files}-file payload cap and are not listed.`)
+    }
     return lines.join('\n')
   }
 
@@ -244,6 +249,9 @@ export function formatSummary(result) {
   }
   if (result.untracked?.length > 0) {
     head.push(`untracked ${result.untracked.length}`)
+  }
+  if (result.droppedFiles > 0) {
+    head.push(`file list capped: ${result.droppedFiles} not listed`)
   }
   if (!result.parsed.ok) {
     head.push('structuring failed — raw text attached')

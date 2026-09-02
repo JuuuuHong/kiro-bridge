@@ -13,6 +13,9 @@ import * as sessions from '../scripts/lib/sessions.mjs'
 import { transfer } from '../scripts/lib/transfer.mjs'
 import { transferJson } from '../scripts/lib/json-output.mjs'
 import { CODES } from '../scripts/lib/errors.mjs'
+import { buildPayload, LIMITS } from '../scripts/lib/context.mjs'
+import { review, formatSummary } from '../scripts/lib/review.mjs'
+import { guardStream } from '../scripts/lib/sanitize.mjs'
 
 function withTempHome(fn) {
   const home = mkdtempSync(join(tmpdir(), 'kb-fix2-'))
@@ -207,4 +210,70 @@ test('transferJson: marks the envelope external — sessionId is agent-supplied'
     assert.equal(envelope.external, true)
     assert.ok(envelope.notice)
   })
+})
+
+// --- 3. Payload file cap: silent truncation + exclusions eating the budget --
+
+test('context: reports how many changed files the cap left out', () => {
+  const files = Array.from({ length: LIMITS.files + 7 }, (_, i) => ({
+    path: `src/f${i}.mjs`, reason: 'changed in diff',
+  }))
+  const { payload, droppedFiles } = buildPayload(
+    { kind: 'review', goal: 'g', diff: 'd', files },
+    { redaction: {} },
+  )
+  assert.equal(payload.files.length, LIMITS.files)
+  assert.equal(droppedFiles, 7, 'the omission must be reported, not silent')
+})
+
+test('context: droppedFiles is 0 when everything fits', () => {
+  const files = [{ path: 'a.mjs' }, { path: 'b.mjs' }]
+  const { droppedFiles } = buildPayload(
+    { kind: 'review', goal: 'g', files }, { redaction: {} },
+  )
+  assert.equal(droppedFiles, 0)
+})
+
+test('context: excluded files do not consume the file cap', () => {
+  // Every excluded path used to be counted against the cap before being
+  // dropped, so a leading run of them could push out every reviewable file.
+  const files = [
+    ...Array.from({ length: LIMITS.files }, (_, i) => ({ path: `secrets/${i}.pem` })),
+    { path: 'src/real.mjs', reason: 'changed in diff' },
+  ]
+  const { payload, excludedFiles, droppedFiles } = buildPayload(
+    { kind: 'review', goal: 'g', files },
+    { redaction: { excludeFiles: ['*.pem'] } },
+  )
+  assert.equal(excludedFiles.length, LIMITS.files)
+  assert.deepEqual(payload.files.map((f) => f.path), ['src/real.mjs'])
+  assert.equal(droppedFiles, 0)
+})
+
+test('review: surfaces the capped file count in the human summary', async () => {
+  const files = Array.from({ length: LIMITS.files + 3 }, (_, i) => ({
+    path: `src/f${i}.mjs`, reason: 'changed in diff',
+  }))
+  const res = await review({
+    collectDiffFn: async () => ({ diff: 'diff text', files, untracked: [], excludedFiles: [], ref: 'HEAD' }),
+    runFn: async () => ({
+      transport: 'acp', sessionId: null,
+      result: '{"findings":[],"summary":"s"}',
+    }),
+    config: { redaction: {}, logRetentionDays: 30 },
+  })
+  assert.equal(res.droppedFiles, 3)
+  assert.match(formatSummary(res), /file list capped: 3 not listed/)
+})
+
+// --- 4. guardStream: multi-byte characters split across write boundaries ----
+
+test('sanitize: a multi-byte char split across two byte writes is not corrupted', () => {
+  const chunks = []
+  const fake = { write: (c) => { chunks.push(c); return true } }
+  guardStream(fake)
+  const buf = Buffer.from('한글 테스트', 'utf8')
+  fake.write(buf.subarray(0, 2)) // first 2 of the 3 bytes of '한'
+  fake.write(buf.subarray(2))
+  assert.equal(chunks.join(''), '한글 테스트')
 })

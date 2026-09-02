@@ -6,6 +6,8 @@
 // clipboard. This module strips terminal control sequences so external text
 // can only ever *print*, never *control*.
 //
+import { StringDecoder } from 'node:string_decoder'
+
 // Preserved: normal printable text, newline (\n = \u000A) and tab (\t =
 // \u0009). Everything else in the control range, plus ANSI/OSC/ESC sequences,
 // is removed.
@@ -65,15 +67,26 @@ export function sanitizeLine(input) {
 // Wrap a writable stream's write() so all outgoing text is sanitized. Buffers
 // (from process byte writes) are decoded as utf8, sanitized, and re-emitted.
 // Returns a function that restores the original write().
+//
+// Byte writes are decoded through a stateful StringDecoder, not a per-chunk
+// Buffer.toString(): a multi-byte character split across two write() calls
+// would otherwise decode to U+FFFD on both sides, corrupting any non-ASCII
+// output (e.g. Korean findings text) at chunk boundaries. The decoder holds the
+// incomplete tail until the continuation bytes arrive.
+//
+// NOTE: currently unused — bridge.mjs sanitizes complete strings at its own
+// write edge (trackedWrite), which has no boundary problem. Kept as the guard
+// for any future byte-level stream piping.
 export function guardStream(stream) {
   if (!stream || typeof stream.write !== 'function') return () => {}
   const original = stream.write.bind(stream)
+  const decoder = new StringDecoder('utf8')
   stream.write = (chunk, encoding, callback) => {
     let text
     if (typeof chunk === 'string') {
       text = chunk
     } else if (chunk instanceof Uint8Array || Buffer.isBuffer(chunk)) {
-      text = Buffer.from(chunk).toString('utf8')
+      text = decoder.write(Buffer.from(chunk))
     } else {
       return original(chunk, encoding, callback)
     }
