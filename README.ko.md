@@ -44,6 +44,13 @@ kiro-bridge는 Kiro 자체의 툴 신뢰 모델, 커스텀 에이전트, spec/pl
 - kiro-cli 2.20+
 - Node 20+
 - `kiro-cli login`으로 인증된 세션
+- macOS 또는 Linux
+
+Windows는 지원하지 않는다. POSIX 전용 메커니즘 두 가지가 오작동 대신
+fail-closed로 멈춘다: 프로세스 신원을 `/proc` 또는 `ps`로 읽고, `cancel`은
+신원을 검증할 수 없는 pid에 시그널을 보내길 거부한다. 즉 Windows에서는
+엉뚱한 프로세스를 죽이는 대신 취소가 거절되며, 백그라운드 잡을 플러그인에서
+중단할 수 없다. 포그라운드 커맨드는 동작할 수 있으나 검증되지 않았다.
 
 ## 설치
 

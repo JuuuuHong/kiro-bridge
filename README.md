@@ -46,6 +46,14 @@ and Kiro's capabilities.
 - kiro-cli 2.20+
 - Node 20+
 - An authenticated `kiro-cli login` session
+- macOS or Linux
+
+Windows is not supported. Two mechanisms are POSIX-specific and fail closed
+rather than misbehaving: process identity is read from `/proc` or `ps`, and
+`cancel` refuses to signal a pid whose identity it cannot verify — so on Windows
+cancel declines instead of killing the wrong process, and background jobs cannot
+be stopped from the plugin. Foreground commands may still work; they are not
+tested there.
 
 ## Install
 
