@@ -286,3 +286,177 @@ test('transfer: no matching session fails with a clear error', async () => {
     }
   })
 })
+
+// --- project-level config overlay (.kiro/settings/kiro-bridge.json) ---
+
+import {
+  loadConfig, loadUserConfig, saveConfig, applyProjectConfig,
+  projectConfigPath, setCachedCapability, CONFIG_DEFAULTS,
+} from '../scripts/lib/config.mjs'
+import { collectDiff } from '../scripts/lib/git.mjs'
+
+function writeProjectConfig(cwd, obj) {
+  mkdirSync(join(cwd, '.kiro', 'settings'), { recursive: true })
+  writeFileSync(projectConfigPath(cwd), JSON.stringify(obj))
+}
+
+test('project config: redaction patterns are added, defaults preserved', async () => {
+  await withTempHome(async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'kb-proj-'))
+    try {
+      writeProjectConfig(cwd, {
+        redaction: { excludeFiles: ['secrets/**'], privateHosts: ['internal.example.com'] },
+      })
+      const merged = loadConfig(cwd)
+      assert.ok(merged.redaction.excludeFiles.includes('secrets/**'))
+      // Union, never replacement — a repo cannot drop a default protection.
+      for (const def of CONFIG_DEFAULTS.redaction.excludeFiles) {
+        assert.ok(merged.redaction.excludeFiles.includes(def), `lost default ${def}`)
+      }
+      assert.deepEqual(merged.redaction.privateHosts, ['internal.example.com'])
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+})
+
+test('project config: weakening keys are ignored', async () => {
+  await withTempHome(async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'kb-proj2-'))
+    try {
+      writeProjectConfig(cwd, {
+        redaction: { entropyThreshold: 99, minSecretLength: 9999, excludeFiles: [] },
+        envPassthrough: ['AWS_SECRET_ACCESS_KEY', 'ANTHROPIC_API_KEY'],
+        capabilities: { '9.9.9': { transport: 'acp' } },
+      })
+      const merged = loadConfig(cwd)
+      assert.equal(merged.redaction.entropyThreshold, undefined)
+      assert.equal(merged.redaction.minSecretLength, undefined)
+      assert.deepEqual(merged.envPassthrough, [])
+      assert.deepEqual(merged.capabilities, {})
+      assert.ok(merged.redaction.excludeFiles.includes('.env'))
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+})
+
+test('project config: a malformed or absent file is a no-op', async () => {
+  await withTempHome(async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'kb-proj3-'))
+    try {
+      assert.deepEqual(loadConfig(cwd).redaction.excludeFiles, CONFIG_DEFAULTS.redaction.excludeFiles)
+      mkdirSync(join(cwd, '.kiro', 'settings'), { recursive: true })
+      writeFileSync(projectConfigPath(cwd), 'not json{{')
+      assert.deepEqual(loadConfig(cwd).redaction.excludeFiles, CONFIG_DEFAULTS.redaction.excludeFiles)
+      writeFileSync(projectConfigPath(cwd), '["an","array"]')
+      assert.deepEqual(loadConfig(cwd).redaction.excludeFiles, CONFIG_DEFAULTS.redaction.excludeFiles)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+})
+
+test('project config: never promoted into the user-global config by a capability write', async () => {
+  await withTempHome(async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'kb-proj4-'))
+    const prevCwd = process.cwd()
+    try {
+      writeProjectConfig(cwd, { redaction: { excludeFiles: ['secrets/**'], privateHosts: ['internal.example.com'] } })
+      process.chdir(cwd)
+      // The capability cache round-trips through saveConfig; it must read the
+      // user layer, not the merged view.
+      saveConfig(setCachedCapability(loadUserConfig(), '1.2.3', { transport: 'acp' }))
+      const persisted = loadUserConfig()
+      assert.ok(!persisted.redaction.excludeFiles.includes('secrets/**'))
+      assert.deepEqual(persisted.redaction.privateHosts, [])
+      assert.equal(persisted.capabilities['1.2.3'].transport, 'acp')
+    } finally {
+      process.chdir(prevCwd)
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+})
+
+test('applyProjectConfig: non-string entries are dropped', () => {
+  const merged = applyProjectConfig(
+    { redaction: { excludeFiles: ['.env'], privateHosts: [] } },
+    { redaction: { excludeFiles: ['ok', 42, null, '', '  '], privateHosts: [{ bad: 1 }] } },
+  )
+  assert.deepEqual(merged.redaction.excludeFiles, ['.env', 'ok'])
+  assert.deepEqual(merged.redaction.privateHosts, [])
+})
+
+// --- git: a repository with no commits has no HEAD to diff against ---
+
+test('collectDiff: a fresh repo with no commits returns untracked files, not a git error', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'kb-fresh-'))
+  try {
+    const run = (args) => new Promise((res, rej) => {
+      execFile('git', args, { cwd: repo }, (err) => (err ? rej(err) : res()))
+    })
+    await run(['init', '-q', '.'])
+    writeFileSync(join(repo, 'brand-new.js'), 'export const a = 1\n')
+
+    const out = await collectDiff({ cwd: repo, excludeFiles: [] })
+    assert.equal(out.diff, '')
+    assert.deepEqual(out.untracked, ['brand-new.js'])
+    assert.deepEqual(out.files.map((f) => f.path), ['brand-new.js'])
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+// --- --json envelopes ---
+
+import { reviewJson, resultJson, errorJson, JSON_NOTICE } from '../scripts/lib/json-output.mjs'
+import { bridgeError, CODES } from '../scripts/lib/errors.mjs'
+
+test('json: a review envelope keeps the trust boundary explicit', () => {
+  const env = reviewJson({
+    ref: 'HEAD',
+    adversarial: false,
+    transport: 'acp',
+    agent: 'kiro-bridge-reviewer',
+    parsed: { ok: true, findings: [{ severity: 'high', file: 'a.js', line: 1, claim: 'c', evidence: 'e', suggestion: 's' }], summary: 'sum', dropped: 0 },
+    wrapped: '<<<KIRO_EXTERNAL_DATA ...\n{}\nKIRO_EXTERNAL_DATA>>>',
+    redactions: [],
+    excludedFiles: [],
+    untracked: [],
+    sessionRecordId: null,
+  })
+  assert.equal(env.ok, true)
+  assert.equal(env.command, 'review')
+  // Agent-produced content must stay marked and must still carry the fence.
+  assert.equal(env.external, true)
+  assert.equal(env.notice, JSON_NOTICE)
+  assert.match(env.wrapped, /KIRO_EXTERNAL_DATA/)
+  assert.equal(env.findings.length, 1)
+  assert.equal(env.parseOk, true)
+})
+
+test('json: a dry-run envelope is not marked external', () => {
+  const env = reviewJson({ dryRun: true, ref: 'HEAD', adversarial: false, agent: 'a', payload: { kind: 'review' }, redactions: [], excludedFiles: [], untracked: [] })
+  assert.equal(env.dryRun, true)
+  assert.equal(env.external, false)
+  assert.equal(env.findings, undefined)
+})
+
+test('json: a stored job body stays marked external', () => {
+  const env = resultJson({ jobId: 'j', status: 'done', meta: { error: null }, body: 'wrapped body' })
+  assert.equal(env.external, true)
+  assert.equal(env.body, 'wrapped body')
+})
+
+test('json: failures use the same envelope with ok:false', () => {
+  const env = errorJson('review', bridgeError(CODES.TOOL_DENIED, { reason: 'nope' }))
+  assert.equal(env.ok, false)
+  assert.equal(env.command, 'review')
+  assert.equal(env.error.code, 'TOOL_DENIED')
+  assert.equal(env.error.reason, 'nope')
+})
+
+test('json: every envelope is serializable and round-trips', () => {
+  const env = resultJson({ empty: true, message: 'No jobs in this repository.' })
+  assert.deepEqual(JSON.parse(JSON.stringify(env)), env)
+})

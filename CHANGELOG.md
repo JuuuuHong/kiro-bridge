@@ -19,8 +19,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every result because routine output deliberately surfaces only the generated
   record id, never the raw ACP session id.
 
+- **Project-level config — `.kiro/settings/kiro-bridge.json`.** Follows Kiro's
+  own global/project settings convention (`~/.kiro/settings/` mirrored by
+  `.kiro/settings/` in the repo) rather than inventing a bridge-specific
+  location. The overlay is deliberately **tightening-only**: a repository may
+  add `redaction.excludeFiles` and `redaction.privateHosts` patterns and
+  nothing else. Because the file ships inside the repository it is
+  attacker-controlled input for any repo you did not write, so removing a
+  default exclude pattern, raising `entropyThreshold`/`minSecretLength`,
+  widening `envPassthrough`, and writing the capability cache are all ignored.
+  Capability-cache writes now read the user layer (`loadUserConfig`) so a
+  project pattern can never be promoted into the user-global config.
+- **`--json` output mode on every command.** Emits a machine-readable envelope
+  instead of the human summary, so callers no longer regex the text output.
+  Failures use the same envelope with `ok: false`. The trust boundary is not
+  relaxed: envelopes carrying agent-produced content set `external: true`,
+  repeat the notice, and keep the fenced `wrapped` string, which remains what
+  belongs in a model's context (ADR-004).
+
 ### Fixed
 
+- **`review` no longer fails with a raw git error in a repository with no
+  commits.** `git diff HEAD` cannot resolve HEAD before the first commit, so a
+  fresh repo whose files are all untracked — the "only new files created" case
+  reviews are meant to handle — escaped as an unclassified exit-128 error.
+  `collectDiff` now detects a missing HEAD and falls through to the
+  untracked-only path.
 - **Large results are no longer silently truncated.** `bridge.mjs` wrote to
   stdout and then called `process.exit()`. Writes to a *pipe* — how Claude Code
   captures this process — are asynchronous and are not flushed by `exit()`, so

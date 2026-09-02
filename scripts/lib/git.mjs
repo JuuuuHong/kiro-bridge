@@ -66,6 +66,19 @@ export async function listUntracked(options = {}) {
 // The file list becomes input to payload.files, and no excerpt is attached —
 // it's better for Kiro to read it itself via read/grep (ADR-003 decision 5).
 // Untracked files pass only their path for the same reason, no content.
+// A repository with no commits has no HEAD, so every `git diff HEAD` fails with
+// a raw exit-128 error. That is a normal state for a fresh repo whose files are
+// all untracked — exactly the "only new files created" case reviews must still
+// handle — so detect it and fall through to the untracked-only path.
+async function headExists(options = {}) {
+  try {
+    await run(['rev-parse', '--verify', '--quiet', 'HEAD'], options)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function collectDiff(options = {}) {
   const { ref = null, excludeFiles = [] } = options
 
@@ -74,10 +87,13 @@ export async function collectDiff(options = {}) {
   }
   await resolveRef(ref, options)
 
+  // Without an explicit ref, comparing requires a HEAD to compare against.
+  const hasBase = ref ? true : await headExists(options)
+
   // Resolve names before content so excluded paths never enter the outbound
   // diff buffer at all. The full file list is retained for the exclusion audit.
   const [nameOnly, untracked] = await Promise.all([
-    run(diffArgs(ref, true), options),
+    hasBase ? run(diffArgs(ref, true), options) : Promise.resolve(''),
     // If ref was given, this is a comparison against that point, so working-tree state is not mixed in.
     ref ? Promise.resolve([]) : listUntracked(options),
   ])

@@ -32,7 +32,18 @@ export function configPath() {
   return join(bridgeHome(), 'config.json')
 }
 
-export function loadConfig() {
+// Project-level overlay. Kiro's own convention is a global/project pair —
+// `~/.kiro/settings/*.json` mirrored by `.kiro/settings/*.json` in the repo
+// (alongside `.kiro/agents/`, `.kiro/specs/`, `.kiro/steering/`) — so we live
+// there rather than inventing a bridge-specific location.
+export function projectConfigPath(cwd = process.cwd()) {
+  return join(cwd, '.kiro', 'settings', 'kiro-bridge.json')
+}
+
+// The user-level config only. This is the layer saveConfig round-trips, so the
+// capability cache must be written from here — never from the merged view, or
+// a repository-local file would be promoted into the user's global config.
+export function loadUserConfig() {
   let onDisk = {}
   try {
     onDisk = JSON.parse(readFileSync(configPath(), 'utf8'))
@@ -50,6 +61,56 @@ export function loadConfig() {
       ? onDisk.envPassthrough.filter((v) => typeof v === 'string')
       : DEFAULTS.envPassthrough,
   }
+}
+
+export function loadProjectConfig(cwd = process.cwd()) {
+  try {
+    const parsed = JSON.parse(readFileSync(projectConfigPath(cwd), 'utf8'))
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function stringList(value) {
+  return Array.isArray(value) ? value.filter((v) => typeof v === 'string' && v.trim() !== '') : []
+}
+
+// Merge the project layer into a user config.
+//
+// Strictly one-directional: a repository file may only *tighten* outbound
+// protection. This matters because the file ships inside the repository, so
+// for any repo you did not write yourself it is attacker-controlled input.
+//
+// Allowed: adding redaction.excludeFiles / redaction.privateHosts patterns.
+// Ignored, deliberately:
+//   - removing or replacing any default exclude pattern (union only)
+//   - entropyThreshold / minSecretLength (raising them would weaken detection)
+//   - envPassthrough (must never widen the child-process env allowlist)
+//   - capabilities (the version cache is user-scoped state, not policy)
+export function applyProjectConfig(config, project = {}) {
+  const projectRedaction = project.redaction && typeof project.redaction === 'object'
+    ? project.redaction
+    : {}
+  const added = {
+    excludeFiles: stringList(projectRedaction.excludeFiles),
+    privateHosts: stringList(projectRedaction.privateHosts),
+  }
+  if (added.excludeFiles.length === 0 && added.privateHosts.length === 0) return config
+  return {
+    ...config,
+    redaction: {
+      ...config.redaction,
+      excludeFiles: [...new Set([...(config.redaction.excludeFiles || []), ...added.excludeFiles])],
+      privateHosts: [...new Set([...(config.redaction.privateHosts || []), ...added.privateHosts])],
+    },
+  }
+}
+
+// The effective config for building outbound payloads: user layer plus the
+// tightening-only project overlay.
+export function loadConfig(cwd = process.cwd()) {
+  return applyProjectConfig(loadUserConfig(), loadProjectConfig(cwd))
 }
 
 // Atomic save via tmpfile + rename. State files are 0600 (design §7).

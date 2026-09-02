@@ -56,8 +56,14 @@ kiro-bridge는 Kiro 자체의 툴 신뢰 모델, 커스텀 에이전트, spec/pl
 | `/kiro-bridge:spec <기능> [--model <id>] [--effort <lv>]` | 2 | Kiro 네이티브 spec 모드로 `.kiro/specs/`에 requirements/design 생성 |
 | `/kiro-bridge:result [job-id] [--follow-up] [--model <id>] [--effort <lv>]` | 2 | 백그라운드 잡 결과 회수, 세션 이어서 후속 질문 가능 |
 | `/kiro-bridge:resume <질문> [--session <id>] [--model <id>] [--effort <lv>]` | 3 | 기록된 재개 가능한 Kiro 세션을 후속 질문으로 이어감 |
+| `/kiro-bridge:transfer [--session <id>]` | 3 | 세션을 Kiro 자체에서 이어가는 `kiro-cli chat --resume-id` 명령을 출력 |
 | `/kiro-bridge:status` | 2 | 이 저장소의 잡 목록과 누적 사용량 표시 |
 | `/kiro-bridge:cancel <job-id>` | 2 | 실행 중인 백그라운드 잡 취소 |
+
+위 모든 명령은 `--json`도 받는다. 사람이 읽는 요약 대신 기계가 읽는 봉투를
+출력하며, 에이전트가 생성한 필드는 `"external": true`로 표시되고 펜스가 적용된
+`wrapped` 문자열을 그대로 유지한다. 모델 컨텍스트에 넣어야 하는 건 `findings`가
+아니라 이 `wrapped` 문자열이다(ADR-004).
 
 ### 리뷰 모드
 
@@ -121,6 +127,13 @@ id 노출을 피하므로 레코드 id가 권장된다.
   이름**을 나열한다(와일드카드 없음). `AWS_PROFILE`, `AWS_REGION` 같은 비밀이
   아닌 선택자에 대한 안전한 opt-in이며, 하드 차단이 항상 우선하므로
   passthrough 항목이 자격증명 변수를 다시 들일 수는 없다.
+- **프로젝트 단위 설정은 강화 전용.** 저장소는 `.kiro/settings/kiro-bridge.json`
+  (Kiro 자체의 전역/프로젝트 설정 관례)으로 아웃바운드 보호를 추가할 수 있지만,
+  `redaction.excludeFiles`와 `redaction.privateHosts` 패턴 *추가*만 가능하다. 이
+  파일은 저장소 안에 함께 배포되므로 내가 작성하지 않은 레포에서는 공격자가
+  제어하는 입력이다. 따라서 기본 제외 패턴 제거, 엔트로피·길이 임계값 완화,
+  `envPassthrough` 확장, capability 캐시 쓰기는 전부 무시된다. 프로젝트 패턴이
+  사용자 전역 `~/.kiro-bridge/config.json`으로 승격되는 일도 없다.
 - **출력 소독.** 모든 Kiro 출력은 터미널 제어 시퀀스 — ANSI CSI 및 OSC(OSC 52
   클립보드 포함), DCS/PM/APC/SOS 문자열, 단독 `ESC`, C0/C1 제어 바이트 — 가
   최종 stdout/stderr 경계와 모든 구조화/원시 출력 경계에서 제거되며, 잡 이벤트

@@ -11,6 +11,7 @@ import {
 import { spec, formatSpec } from './lib/spec.mjs'
 import { resume, formatResume } from './lib/resume.mjs'
 import { transfer, formatTransfer } from './lib/transfer.mjs'
+import * as json from './lib/json-output.mjs'
 import { EVENT_TYPES } from './lib/transport/events.mjs'
 import { BridgeError } from './lib/errors.mjs'
 import { sanitizeTerminal } from './lib/sanitize.mjs'
@@ -64,17 +65,18 @@ export async function flushOutput(timeoutMs = FLUSH_TIMEOUT_MS) {
 
 const USAGE = `kiro-bridge
 
-  bridge.mjs setup  [--force]
-  bridge.mjs review [ref]    [--focus <text>] [--adversarial] [--bg] [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
-  bridge.mjs task   <goal>   [--bg] [--write] [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
-  bridge.mjs spec   <goal>   [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
-  bridge.mjs result [job-id] [--follow-up <question>] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
-  bridge.mjs resume <question> [--session <id>] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
-  bridge.mjs transfer [--session <id>]
-  bridge.mjs status
-  bridge.mjs cancel <job-id>
+  bridge.mjs setup  [--force] [--json]
+  bridge.mjs review [ref]    [--focus <text>] [--adversarial] [--bg] [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet] [--json]
+  bridge.mjs task   <goal>   [--bg] [--write] [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet] [--json]
+  bridge.mjs spec   <goal>   [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet] [--json]
+  bridge.mjs result [job-id] [--follow-up <question>] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet] [--json]
+  bridge.mjs resume <question> [--session <id>] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet] [--json]
+  bridge.mjs transfer [--session <id>] [--json]
+  bridge.mjs status [--json]
+  bridge.mjs cancel <job-id> [--json]
 
 review results are data and are never auto-applied. task --write explicitly permits scoped file writes; review its git diff afterward.
+--json emits a machine-readable envelope; agent-produced fields stay marked external and fenced.
 `
 
 
@@ -91,18 +93,19 @@ const FLAG_NAMES = {
   effort: '--effort',
   followUp: '--follow-up',
   session: '--session',
+  json: '--json',
 }
 
 const ALLOWED_FLAGS = {
-  setup: new Set(['force']),
-  review: new Set(['focus', 'adversarial', 'background', 'dryRun', 'model', 'effort', 'timeoutMs', 'quiet']),
-  task: new Set(['background', 'write', 'dryRun', 'model', 'effort', 'timeoutMs', 'quiet']),
-  spec: new Set(['dryRun', 'model', 'effort', 'timeoutMs', 'quiet']),
-  result: new Set(['followUp', 'model', 'effort', 'timeoutMs', 'quiet']),
-  resume: new Set(['session', 'model', 'effort', 'timeoutMs', 'quiet']),
-  transfer: new Set(['session']),
-  status: new Set(),
-  cancel: new Set(),
+  setup: new Set(['force', 'json']),
+  review: new Set(['focus', 'adversarial', 'background', 'dryRun', 'model', 'effort', 'timeoutMs', 'quiet', 'json']),
+  task: new Set(['background', 'write', 'dryRun', 'model', 'effort', 'timeoutMs', 'quiet', 'json']),
+  spec: new Set(['dryRun', 'model', 'effort', 'timeoutMs', 'quiet', 'json']),
+  result: new Set(['followUp', 'model', 'effort', 'timeoutMs', 'quiet', 'json']),
+  resume: new Set(['session', 'model', 'effort', 'timeoutMs', 'quiet', 'json']),
+  transfer: new Set(['session', 'json']),
+  status: new Set(['json']),
+  cancel: new Set(['json']),
   _worker: new Set(),
 }
 
@@ -149,6 +152,7 @@ export function parseArgs(argv) {
   for (let i = 0; i < rest.length; i += 1) {
     const arg = rest[i]
     if (arg === '--dry-run') flags.dryRun = true
+    else if (arg === '--json') flags.json = true
     else if (arg === '--force') flags.force = true
     else if (arg === '--quiet') flags.quiet = true
     else if (arg === '--bg') flags.background = true
@@ -187,9 +191,20 @@ function makeReporter(quiet) {
   }
 }
 
+// Renders either the human summary or the --json envelope. The envelope is
+// built lazily so the text path never pays for it.
+function emit(flags, text, envelopeFn) {
+  outWrite(flags.json ? json.render(envelopeFn()) : `${text}\n`)
+}
+
+// Remembered so the top-level failure handler can answer in the same format
+// the caller asked for.
+let invocation = { command: null, json: false }
+
 async function main(argv) {
   assertSupportedRuntime()
   const { command, flags } = parseArgs(argv)
+  invocation = { command: command ?? null, json: Boolean(flags.json) }
 
   if (!command || command === 'help' || command === '--help') {
     outWrite(USAGE)
@@ -200,7 +215,7 @@ async function main(argv) {
 
   if (command === 'setup') {
     const result = await setup({ force: flags.force })
-    outWrite(`${formatSetup(result)}\n`)
+    emit(flags, formatSetup(result), () => json.setupJson(result))
     return result.ok ? 0 : 1
   }
 
@@ -214,7 +229,7 @@ async function main(argv) {
         effort: flags.effort,
         timeoutMs: flags.timeoutMs,
       })
-      outWrite(`${formatTask(bg)}\n`)
+      emit(flags, formatTask(bg), () => json.taskJson(bg))
       return 0
     }
     const res = await review({
@@ -228,7 +243,7 @@ async function main(argv) {
       register: true,
       onEvent: makeReporter(flags.quiet),
     })
-    outWrite(`${formatSummary(res)}\n`)
+    emit(flags, formatSummary(res), () => json.reviewJson(res))
     return 0
   }
 
@@ -243,7 +258,7 @@ async function main(argv) {
       effort: flags.effort,
       onEvent: makeReporter(flags.quiet),
     })
-    outWrite(`${formatTask(res)}\n`)
+    emit(flags, formatTask(res), () => json.taskJson(res))
     return 0
   }
 
@@ -256,7 +271,7 @@ async function main(argv) {
       effort: flags.effort,
       onEvent: makeReporter(flags.quiet),
     })
-    outWrite(`${formatSpec(res)}\n`)
+    emit(flags, formatSpec(res), () => json.specJson(res))
     return 0
   }
 
@@ -269,7 +284,7 @@ async function main(argv) {
       timeoutMs: flags.timeoutMs,
       onEvent: makeReporter(flags.quiet),
     })
-    outWrite(`${formatResult(res)}\n`)
+    emit(flags, formatResult(res), () => json.resultJson(res))
     return 0
   }
 
@@ -282,23 +297,25 @@ async function main(argv) {
       timeoutMs: flags.timeoutMs,
       onEvent: makeReporter(flags.quiet),
     })
-    outWrite(`${formatResume(res)}\n`)
+    emit(flags, formatResume(res), () => json.resumeJson(res))
     return 0
   }
 
   if (command === 'transfer') {
-    outWrite(`${formatTransfer(transfer({ selector: flags.session }))}\n`)
+    const res = transfer({ selector: flags.session })
+    emit(flags, formatTransfer(res), () => json.transferJson(res))
     return 0
   }
 
   if (command === 'status') {
-    outWrite(`${formatStatus(status())}\n`)
+    const res = status()
+    emit(flags, formatStatus(res), () => json.statusJson(res))
     return 0
   }
 
   if (command === 'cancel') {
     const res = cancel({ jobId: flags._[0] })
-    outWrite(`${formatCancel(res)}\n`)
+    emit(flags, formatCancel(res), () => json.cancelJson(res))
     return res.ok ? 0 : 1
   }
 
@@ -332,6 +349,12 @@ if (isDirectInvocation()) {
   main(process.argv.slice(2))
     .then((code) => exitAfterFlush(code))
     .catch((err) => {
+      // Answer in the format the caller asked for: a --json caller must not
+      // have to parse prose to find out the run failed.
+      if (invocation.json) {
+        outWrite(json.render(json.errorJson(invocation.command, err)))
+        return exitAfterFlush(1)
+      }
       if (err instanceof BridgeError) {
         errWrite(`[${err.code}] ${err.message}\n`)
         if (err.details?.reason) {

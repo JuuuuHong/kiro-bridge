@@ -59,8 +59,14 @@ and Kiro's capabilities.
 | `/kiro-bridge:spec <feature> [--model <id>] [--effort <lv>]` | 2 | Use Kiro's native spec mode to generate requirements/design under `.kiro/specs/` |
 | `/kiro-bridge:result [job-id] [--follow-up] [--model <id>] [--effort <lv>]` | 2 | Retrieve a background job's result, optionally continuing the session |
 | `/kiro-bridge:resume <question> [--session <id>] [--model <id>] [--effort <lv>]` | 3 | Continue any recorded resumable Kiro session with a follow-up question |
+| `/kiro-bridge:transfer [--session <id>]` | 3 | Print the `kiro-cli chat --resume-id` command to continue a session in Kiro itself |
 | `/kiro-bridge:status` | 2 | List jobs for this repo and show accumulated usage |
 | `/kiro-bridge:cancel <job-id>` | 2 | Cancel a running background job |
+
+Every command above also accepts `--json`, which emits a machine-readable
+envelope instead of the human summary. Agent-produced fields stay marked
+`"external": true` and keep the fenced `wrapped` string — that string, not
+`findings`, is what belongs in a model's context (ADR-004).
 
 ### Review modes
 
@@ -133,6 +139,15 @@ it avoids surfacing the raw ACP id.
   non-secret selectors such as `AWS_PROFILE` or `AWS_REGION`; the hard-deny
   floor always wins, so a passthrough entry can never re-introduce a credential
   variable.
+- **Project-level config is tightening-only.** A repository may add outbound
+  protection via `.kiro/settings/kiro-bridge.json` (Kiro's own global/project
+  settings convention), but only by *adding* `redaction.excludeFiles` and
+  `redaction.privateHosts` patterns. Because that file ships inside the
+  repository, it is attacker-controlled input for any repo you did not write:
+  it can never remove a default exclude pattern, raise the entropy/length
+  thresholds, widen `envPassthrough`, or write the capability cache. Those keys
+  are ignored, and project patterns are never promoted into the user-global
+  `~/.kiro-bridge/config.json`.
 - **Output sanitization.** All Kiro output is stripped of terminal control
   sequences — ANSI CSI and OSC (including OSC 52 clipboard), DCS/PM/APC/SOS
   strings, bare `ESC`, and C0/C1 control bytes — at the final stdout/stderr
