@@ -326,6 +326,21 @@ for follow-up, the subprocess fallback path (`--output-format stream-json`) —
 since ACP always wins, verifying the fallback requires explicitly forcing
 `transport: 'subprocess'`.
 
+### Deferred: persistent ACP broker (TODO, not scheduled)
+
+Comparable plugins (`openai/codex-plugin-cc` via `app-server-broker.mjs`,
+`gemini-plugin-cc` via an `acp-broker.mjs` multiplexing JSON-RPC over a Unix
+socket) keep one long-lived agent process per editor session so repeated
+commands skip process start and the ACP handshake. We spawn `kiro-cli acp` per
+call instead.
+
+Deferred deliberately. The latency win is real but the cost is a daemon
+lifecycle (socket permissions, stale-socket recovery, crash handling) that
+would erode properties this design currently gets for free: per-call child-env
+isolation (§12.1), unambiguous cancellation, and a job lifecycle whose only
+shared state is on disk. Revisit only if measured per-call startup becomes the
+dominant cost — and measure before building.
+
 ## 11. Testing strategy
 
 - transport, context, findings, and jobs are unit-tested against a fake

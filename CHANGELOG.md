@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`/kiro-bridge:transfer` — hand a delegated session back to Kiro's own CLI.**
+  Prints the `kiro-cli chat --resume-id <session-id>` command that continues a
+  recorded conversation in Kiro's TUI, so a delegation started from Claude Code
+  can be taken over directly. Verified that `kiro-cli acp`'s `session/new`
+  persists into `~/.kiro/sessions/cli/<sessionId>.json` — the same store
+  `chat --resume-id` reads. It spawns no process and sends no prompt, so it
+  spends no credits. Kept as a separate command rather than a line appended to
+  every result because routine output deliberately surfaces only the generated
+  record id, never the raw ACP session id.
+
 ### Fixed
 
 - **Large results are no longer silently truncated.** `bridge.mjs` wrote to

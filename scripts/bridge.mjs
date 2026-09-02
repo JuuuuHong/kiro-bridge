@@ -10,6 +10,7 @@ import {
 } from './lib/task.mjs'
 import { spec, formatSpec } from './lib/spec.mjs'
 import { resume, formatResume } from './lib/resume.mjs'
+import { transfer, formatTransfer } from './lib/transfer.mjs'
 import { EVENT_TYPES } from './lib/transport/events.mjs'
 import { BridgeError } from './lib/errors.mjs'
 import { sanitizeTerminal } from './lib/sanitize.mjs'
@@ -69,6 +70,7 @@ const USAGE = `kiro-bridge
   bridge.mjs spec   <goal>   [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
   bridge.mjs result [job-id] [--follow-up <question>] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
   bridge.mjs resume <question> [--session <id>] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]
+  bridge.mjs transfer [--session <id>]
   bridge.mjs status
   bridge.mjs cancel <job-id>
 
@@ -98,6 +100,7 @@ const ALLOWED_FLAGS = {
   spec: new Set(['dryRun', 'model', 'effort', 'timeoutMs', 'quiet']),
   result: new Set(['followUp', 'model', 'effort', 'timeoutMs', 'quiet']),
   resume: new Set(['session', 'model', 'effort', 'timeoutMs', 'quiet']),
+  transfer: new Set(['session']),
   status: new Set(),
   cancel: new Set(),
   _worker: new Set(),
@@ -280,6 +283,11 @@ async function main(argv) {
       onEvent: makeReporter(flags.quiet),
     })
     outWrite(`${formatResume(res)}\n`)
+    return 0
+  }
+
+  if (command === 'transfer') {
+    outWrite(`${formatTransfer(transfer({ selector: flags.session }))}\n`)
     return 0
   }
 

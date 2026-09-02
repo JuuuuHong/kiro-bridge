@@ -205,3 +205,84 @@ test('pruneUsage: a missing log is a no-op', () => {
     assert.equal(pruneUsage(), 0)
   })
 })
+
+// --- transfer: hand a recorded session back to Kiro's own CLI ---
+
+import { transfer, formatTransfer } from '../scripts/lib/transfer.mjs'
+import { registerSession } from '../scripts/lib/sessions.mjs'
+
+function seedRecord(cwd, overrides = {}) {
+  return registerSession({
+    sessionId: '98767b58-4f97-4262-aa62-457eed96cc94',
+    agent: 'kiro-bridge-reviewer',
+    source: { kind: 'review', command: 'review' },
+    write: false,
+    transport: 'acp',
+    ...overrides,
+  }, { cwd })
+}
+
+test('transfer: renders a kiro-cli resume command for the latest session', async () => {
+  await withTempHome(async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'kb-transfer-'))
+    try {
+      const rec = seedRecord(cwd)
+      const out = transfer({ cwd })
+      assert.equal(out.sessionId, '98767b58-4f97-4262-aa62-457eed96cc94')
+      assert.equal(out.recordId, rec.recordId)
+      assert.equal(out.command, 'kiro-cli chat --resume-id 98767b58-4f97-4262-aa62-457eed96cc94')
+      const text = formatTransfer(out)
+      assert.match(text, /kiro-cli chat --resume-id 98767b58/)
+      assert.match(text, /read-only/)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+})
+
+test('transfer: resolves an explicit record id and a raw session id', async () => {
+  await withTempHome(async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'kb-transfer2-'))
+    try {
+      const rec = seedRecord(cwd)
+      assert.equal(transfer({ selector: rec.recordId, cwd }).sessionId, rec.sessionId)
+      assert.equal(transfer({ selector: rec.sessionId, cwd }).recordId, rec.recordId)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+})
+
+test('transfer: a write-scoped session is not labelled read-only', async () => {
+  await withTempHome(async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'kb-transfer3-'))
+    try {
+      seedRecord(cwd, { agent: 'kiro-bridge-worker', write: true, source: { kind: 'task', command: 'task' } })
+      assert.doesNotMatch(formatTransfer(transfer({ cwd })), /read-only/)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+})
+
+test('transfer: no matching session fails with a clear error', async () => {
+  await withTempHome(async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'kb-transfer4-'))
+    try {
+      assert.throws(() => transfer({ cwd }), (err) => {
+        assert.equal(err.code, 'PROTOCOL')
+        assert.match(err.details.reason, /no resumable ACP session found/)
+        return true
+      })
+      seedRecord(cwd)
+      // The reason rides in details.reason; bridge.mjs prints it under the
+      // generic BridgeError message.
+      assert.throws(() => transfer({ selector: 'nope', cwd }), (err) => {
+        assert.match(err.details.reason, /no resumable ACP session matches "nope"/)
+        return true
+      })
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+})

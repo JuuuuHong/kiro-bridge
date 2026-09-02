@@ -12,7 +12,8 @@ Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" resume $ARGUMENTS`.
 - `--session <id>` accepts either a record id (from a resume hint) or the raw
   ACP session id; the most recent matching session wins. Prefer the generated
   record id — the raw ACP session id works, but passing the record id avoids
-  surfacing/exposing the raw ACP id.
+  surfacing/exposing the raw ACP id. `/kiro-bridge:transfer` is the one command
+  that deliberately prints the raw id, for handing the session to Kiro's TUI.
 - The original agent is preserved: a resumed review stays a read-only reviewer,
   research/worker/spec sessions keep their own agent and web-derived wrapping.
 - If no matching resumable ACP session exists, this fails with a clear error —
