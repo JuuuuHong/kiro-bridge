@@ -77,8 +77,19 @@ export function loadProjectConfig(cwd = process.cwd()) {
   }
 }
 
+// A repository may only ever *add* patterns, but "add" still has to be bounded:
+// the overlay ships inside the repo, so an unbounded list is a way to make the
+// reviewer's own machine do unbounded work. Both the count and each pattern's
+// length are capped, and anything past the cap is dropped rather than rejected
+// — a hostile file must not be able to fail the review either.
+const MAX_PROJECT_PATTERNS = 64
+const MAX_PATTERN_LENGTH = 200
+
 function stringList(value) {
-  return Array.isArray(value) ? value.filter((v) => typeof v === 'string' && v.trim() !== '') : []
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((v) => typeof v === 'string' && v.trim() !== '' && v.length <= MAX_PATTERN_LENGTH)
+    .slice(0, MAX_PROJECT_PATTERNS)
 }
 
 // Merge the project layer into a user config.

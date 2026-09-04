@@ -46,6 +46,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **A repository's exclude patterns could hang the reviewer's machine.**
+  `globToRegExp` escaped every regex metacharacter except `?`, so a `?` in a
+  pattern compiled to a quantifier instead of a wildcard. `a?a?a?…aaa…b` against
+  `aaa…` then backtracked exponentially — 125ms at 20 characters, doubling every
+  four. Patterns reach that function from `.kiro/settings/kiro-bridge.json`,
+  which ships inside the repository being reviewed, and `isExcludedPath` runs
+  once per path per pattern, so the cost multiplied by the diff's file count.
+  The tightening-only overlay was a denial-of-service lever.
+
+  `?` is now the single-character wildcard it was always meant to be (`[^/]`,
+  which does not cross a separator), and the escape set covers the rest.
+  Compiled patterns are cached, so the compile cost is paid once rather than
+  files x patterns times. Project pattern lists are capped at 64 entries of 200
+  characters; anything beyond is dropped rather than rejected, since a hostile
+  file must not be able to fail the review either. The same input now resolves
+  in under a millisecond at 120 characters.
+
 - **The bridge no longer runs a configured test command.** A `signals.testCommand`
   the bridge executed itself was added and removed before any release; it is
   documented here because it briefly reached `main`.

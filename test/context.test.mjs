@@ -7,6 +7,7 @@ import {
   shannonEntropy,
   LIMITS,
 } from '../scripts/lib/context.mjs'
+import { applyProjectConfig, CONFIG_DEFAULTS } from '../scripts/lib/config.mjs'
 
 const EXCLUDE = ['.env', '.env.*', '*.pem', '*.key', '*credentials*', 'id_rsa']
 
@@ -176,4 +177,44 @@ test('exclude list: double-star crosses directories while single-star does not',
   assert.equal(isExcludedPath('secrets/prod/token.txt', ['secrets/**']), true)
   assert.equal(isExcludedPath('secrets/prod/token.txt', ['secrets/*']), false)
   assert.equal(isExcludedPath('secrets/token.txt', ['secrets/*']), true)
+})
+
+// --- glob compilation: a repository supplies these patterns, so they are
+// untrusted input even though the overlay may only tighten. ---
+
+test('glob: ? is a single-character wildcard, not a regex quantifier', () => {
+  assert.equal(isExcludedPath('abc', ['a?c']), true)
+  assert.equal(isExcludedPath('ac', ['a?c']), false, '? must require a character')
+  assert.equal(isExcludedPath('a/c', ['a?c']), false, '? must not cross a separator')
+})
+
+test('glob: a pattern built to backtrack exponentially resolves promptly', () => {
+  // `a?a?a?…aaa…b` against `aaa…`: nested optionals used to make this take
+  // exponential time, so a repo config could hang the reviewer's machine.
+  const n = 120
+  const pattern = `${'a?'.repeat(n)}${'a'.repeat(n)}b`
+  const started = Date.now()
+  assert.equal(isExcludedPath('a'.repeat(n), [pattern]), false)
+  const elapsed = Date.now() - started
+  assert.ok(elapsed < 500, `took ${elapsed}ms — the pattern is backtracking again`)
+})
+
+test('glob: regex metacharacters stay literal', () => {
+  assert.equal(isExcludedPath('a+b', ['a+b']), true)
+  assert.equal(isExcludedPath('aab', ['a+b']), false)
+  assert.equal(isExcludedPath('a.b', ['a.b']), true)
+  assert.equal(isExcludedPath('axb', ['a.b']), false)
+  assert.equal(isExcludedPath('a-b', ['a-b']), true)
+})
+
+test('project pattern lists are bounded in count and length', () => {
+  const merged = applyProjectConfig({ ...CONFIG_DEFAULTS }, {
+    redaction: {
+      excludeFiles: Array.from({ length: 500 }, (_, i) => `p${i}`),
+      privateHosts: ['x'.repeat(5000), 'ok.example.com'],
+    },
+  })
+  const added = merged.redaction.excludeFiles.filter((p) => /^p\d+$/.test(p))
+  assert.equal(added.length, 64, 'the count cap must hold')
+  assert.deepEqual(merged.redaction.privateHosts, ['ok.example.com'], 'over-long patterns are dropped')
 })

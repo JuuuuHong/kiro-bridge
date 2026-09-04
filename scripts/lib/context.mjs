@@ -43,8 +43,18 @@ function looksMixedCharset(str) {
   return /[a-z]/.test(str) && /[A-Z]/.test(str) && /[0-9]/.test(str)
 }
 
-// glob-lite: `*` matches within one path segment; `**` crosses directories.
+// glob-lite: `*` matches within one path segment, `**` crosses directories,
+// and `?` matches exactly one non-separator character.
 // Patterns are checked against both the full path and the basename.
+//
+// Every character that is not one of those three wildcards is escaped. `?` used
+// to fall through unescaped, which made it a regex quantifier rather than a
+// wildcard: a pattern like `a?a?a?…` compiled to nested optionals and matched
+// in exponential time. Since a repository's own `.kiro/settings/kiro-bridge.json`
+// may add exclude patterns, that turned the tightening-only overlay into a way
+// to hang the bridge on the reviewer's machine.
+const REGEX_META = /[.*+?^${}()|[\]\\/-]/
+
 function globToRegExp(pattern) {
   let source = ''
   for (let i = 0; i < pattern.length; i += 1) {
@@ -54,7 +64,9 @@ function globToRegExp(pattern) {
       i += 1
     } else if (ch === '*') {
       source += '[^/]*'
-    } else if (/[.+^${}()|[\]\\]/.test(ch)) {
+    } else if (ch === '?') {
+      source += '[^/]'
+    } else if (REGEX_META.test(ch)) {
       source += `\\${ch}`
     } else {
       source += ch
@@ -63,11 +75,28 @@ function globToRegExp(pattern) {
   return new RegExp(`^${source}$`, 'i')
 }
 
+// Compiling is the expensive half and the pattern set is tiny and stable, but
+// isExcludedPath runs per path per pattern — so without this the compile cost
+// is paid files x patterns times per review.
+const REGEX_CACHE = new Map()
+const REGEX_CACHE_MAX = 500
+
+function compiled(pattern) {
+  const hit = REGEX_CACHE.get(pattern)
+  if (hit) return hit
+  const re = globToRegExp(pattern)
+  // A plain size ceiling; the pattern set is bounded by config.mjs anyway, so
+  // this only guards against a long-lived process seeing many repositories.
+  if (REGEX_CACHE.size >= REGEX_CACHE_MAX) REGEX_CACHE.clear()
+  REGEX_CACHE.set(pattern, re)
+  return re
+}
+
 export function isExcludedPath(path, patterns) {
   if (!path) return false
   const name = basename(path)
   return patterns.some((pattern) => {
-    const re = globToRegExp(pattern)
+    const re = compiled(pattern)
     return re.test(path) || re.test(name)
   })
 }
