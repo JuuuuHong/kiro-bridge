@@ -42,39 +42,75 @@ function stripFences(text) {
   return String(text).split(FENCE_OPEN).join('(fence)').split(FENCE_CLOSE).join('(fence)')
 }
 
-// Extract the first balanced JSON object from the text. Also handles ```json fences.
-export function extractJsonObject(text) {
-  if (typeof text !== 'string') return null
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/)
-  const candidates = fenced ? [fenced[1], text] : [text]
+// Extract a balanced JSON object from the text. Also handles ```json fences.
+//
+// Every fenced block is a candidate, and within a candidate every top-level
+// object is tried in turn: a model that ignores the prompt and prints a schema
+// example ahead of the real answer would otherwise hand back the example, and
+// the real findings would be lost to the raw fallback. The fencing around that
+// preamble is incidental — it shadows just as well unfenced, or sharing a fence
+// with the answer — so the scan does not depend on it.
+//
+// `accept` lets the caller say which shape it is looking for; the first parsed
+// object still wins when nothing matches (or no predicate is given), so a
+// caller that just wants "some JSON object" is unaffected.
+//
+// Provenance note (ADR-003/004): considering later blocks means a response can
+// steer which of its own blocks is selected — e.g. a quoted web page carrying
+// its own findings block could be surfaced as structured findings where it
+// would previously have fallen back to raw text and its skepticism marker.
+// Accepted deliberately: the structured path caps and strips per field, which
+// is tighter than dumping up to CAPS.raw of agent prose into context, and the
+// selected object still goes through stripFences + sanitizeFindings inside the
+// trust fence. Selection order is preserved, so a decoy cannot displace an
+// earlier valid block.
 
-  for (const candidate of candidates) {
-    const start = candidate.indexOf('{')
-    if (start < 0) continue
-    let depth = 0
-    let inString = false
-    let escaped = false
-    for (let i = start; i < candidate.length; i += 1) {
-      const ch = candidate[i]
-      if (escaped) { escaped = false; continue }
-      if (ch === '\\') { escaped = true; continue }
-      if (ch === '"') { inString = !inString; continue }
-      if (inString) continue
-      if (ch === '{') depth += 1
-      else if (ch === '}') {
-        depth -= 1
-        if (depth === 0) {
-          try {
-            return JSON.parse(candidate.slice(start, i + 1))
-          } catch {
-            break
-          }
-        }
-      }
+// Index just past the object opening at `start`, or -1 if it never closes.
+function balancedEnd(text, start) {
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i]
+    if (escaped) { escaped = false; continue }
+    if (ch === '\\') { escaped = true; continue }
+    if (ch === '"') { inString = !inString; continue }
+    if (inString) continue
+    if (ch === '{') depth += 1
+    else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) return i + 1
     }
   }
-  return null
+  return -1
 }
+
+export function extractJsonObject(text, accept = null) {
+  if (typeof text !== 'string') return null
+  const fenced = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map((match) => match[1])
+  const candidates = fenced.length > 0 ? [...fenced, text] : [text]
+  let fallback = null
+
+  for (const candidate of candidates) {
+    let start = candidate.indexOf('{')
+    while (start >= 0) {
+      const end = balancedEnd(candidate, start)
+      // Unbalanced from here on, so no further object can close in this candidate.
+      if (end < 0) break
+      try {
+        const parsed = JSON.parse(candidate.slice(start, end))
+        if (!accept || accept(parsed)) return parsed
+        if (fallback === null) fallback = parsed
+      } catch {
+        // Not valid JSON — resume after it rather than giving up on the candidate.
+      }
+      // Resume past the object just consumed, never at its nested braces.
+      start = candidate.indexOf('{', end)
+    }
+  }
+  return fallback
+}
+
 
 // Schema-enforcing sanitization: drop out-of-schema fields, cap lengths,
 // strip control characters, whitelist severity enum (demote to low if not matched).
@@ -102,7 +138,7 @@ export function sanitizeFindings(parsed) {
 // Raw response -> { ok, findings, summary, raw }. Parse failure is not an error (ADR-003).
 export function parseResponse(rawText) {
   const raw = clean(rawText, CAPS.raw)
-  const parsed = extractJsonObject(raw)
+  const parsed = extractJsonObject(raw, (obj) => Array.isArray(obj.findings))
   if (!parsed || !Array.isArray(parsed.findings)) {
     return { ok: false, findings: [], summary: '', dropped: 0, raw }
   }

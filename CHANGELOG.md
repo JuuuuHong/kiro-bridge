@@ -61,6 +61,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A findings block after a shadowing preamble was lost to the raw fallback.**
+  `extractJsonObject` matched only the first ```` ```json ```` fence and, within
+  it, only the first balanced object. When Kiro ignored the prompt and printed
+  a schema example ahead of the real answer, that example was returned, the
+  `findings` array was missing, and the entire review degraded to unstructured
+  raw text. Every fenced block is now a candidate and every top-level object
+  within a candidate is tried in turn, with `parseResponse` asking for the
+  block that actually carries a `findings` array — so the preamble no longer
+  shadows the answer whether it is fenced, unfenced, or sharing a fence with
+  it. Callers wanting "some JSON object" pass no predicate and are unaffected.
+
 - **Self-review of the additions above.** Four defects found by reviewing the
   new code with the same pass applied to 0.2.0:
   - The project overlay was resolved from `process.cwd()` while commands

@@ -56,6 +56,48 @@ test('missing findings array is treated as structuring failure', () => {
   assert.equal(r.ok, false)
 })
 
+// A model that ignores the prompt and prints a schema example first used to
+// hand back that example, dropping the real findings into the raw fallback.
+test('picks the fenced block that actually carries findings', () => {
+  const example = JSON.stringify({ example: true, note: 'schema below' })
+  const r = parseResponse(
+    `Here is the shape:\n\n\`\`\`json\n${example}\n\`\`\`\n\nAnd the result:\n\n\`\`\`json\n${GOOD}\n\`\`\``,
+  )
+  assert.equal(r.ok, true)
+  assert.equal(r.findings[0].file, 'src/auth.mjs')
+})
+
+// The shadowing preamble is the actual bug; the fencing around it is incidental.
+// These are the same failure as the fenced case, wearing different clothes.
+test('finds findings when the shadowing example shares one fence with it', () => {
+  const r = parseResponse(`\`\`\`json\n{"example":true}\n\n${GOOD}\n\`\`\``)
+  assert.equal(r.ok, true)
+  assert.equal(r.findings[0].file, 'src/auth.mjs')
+})
+
+test('finds findings left unfenced after a fenced example', () => {
+  const r = parseResponse(`\`\`\`json\n{"example":true}\n\`\`\`\n\nResult:\n${GOOD}`)
+  assert.equal(r.ok, true)
+  assert.equal(r.findings[0].file, 'src/auth.mjs')
+})
+
+test('finds findings after a shadowing example when nothing is fenced', () => {
+  const r = parseResponse(`Shape: {"example":true}\n\nResult: ${GOOD}`)
+  assert.equal(r.ok, true)
+  assert.equal(r.findings[0].file, 'src/auth.mjs')
+})
+
+test('skips a malformed leading object and keeps scanning the same candidate', () => {
+  const r = parseResponse(`{"broken": ,}\n${GOOD}`)
+  assert.equal(r.ok, true)
+  assert.equal(r.findings[0].file, 'src/auth.mjs')
+})
+
+test('extractJsonObject without a predicate still returns the first object', () => {
+  const obj = extractJsonObject('```json\n{"a":1}\n```\n```json\n{"b":2}\n```')
+  assert.deepEqual(obj, { a: 1 })
+})
+
 // --- sanitization (ADR-004 decision 3) ---
 
 test('fields outside the schema are dropped', () => {
