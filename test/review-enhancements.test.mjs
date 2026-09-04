@@ -178,7 +178,7 @@ test('formatSummary: header and dry-run identify standard vs adversarial', async
 
 // --- background persistence: payload options only carry safe fields ---
 
-test('reviewBackground: persists only ref/focus/adversarial/model/effort/timeout — never diff or files', async () => {
+test('reviewBackground: persists only selectors — never diff, files, or collected signal output', async () => {
   const spawned = []
   const bg = reviewBackground({
     ref: 'main',
@@ -199,12 +199,19 @@ test('reviewBackground: persists only ref/focus/adversarial/model/effort/timeout
   const job = jobs.readJob(bg.jobId, CWD)
   assert.equal(job.meta.command, 'review')
   const po = job.meta.payloadOptions
-  assert.deepEqual(Object.keys(po).sort(), ['adversarial', 'effort', 'focus', 'model', 'ref', 'timeoutMs'])
+  assert.deepEqual(Object.keys(po).sort(), [
+    'adversarial', 'effort', 'focus', 'model', 'noSignals', 'ref', 'signalsPath', 'timeoutMs',
+  ])
   assert.equal(po.ref, 'main')
   assert.equal(po.focus, 'concurrency')
   assert.equal(po.adversarial, true)
   assert.ok(!('diff' in po), 'diff must never be persisted in the job payload')
   assert.ok(!('files' in po), 'file contents must never be persisted in the job payload')
+  // Signals follow the same rule as the diff: only the selector is persisted,
+  // so captured test output never sits in job metadata waiting to be read.
+  assert.equal(po.signalsPath, null)
+  assert.equal(po.noSignals, false)
+  assert.ok(!('signals' in po), 'collected signal output must never be persisted')
   assert.equal(job.meta.pid, 5151, 'parent records the spawned pid while queued')
 })
 

@@ -29,8 +29,9 @@ shipped flows do not depend on it. Interactive brokering is Phase 3.
 
 **Structured context handoff with trust-boundary wrapping.** Instead of a
 prompt string, kiro-bridge hands over a structured payload — diff, relevant
-file excerpts, failing-test output, constraints — and gets back findings JSON
-with severity attached. The payload is deterministic, so failures are
+file excerpts, constraints, and optionally execution evidence such as test
+output (see [Execution evidence](#execution-evidence)) — and gets back findings
+JSON with severity attached. The payload is deterministic, so failures are
 reproducible and regression-testable. And because Kiro's output re-enters
 Claude Code's context, it's wrapped as data, not command: no auto-apply,
 fixed trust-boundary wrapping, and schema-enforced sanitization on every
@@ -67,7 +68,7 @@ tested there.
 | Command | Phase | Description |
 |---|---|---|
 | `/kiro-bridge:setup` | 1 | Verify install/auth and install the bundled Kiro agents |
-| `/kiro-bridge:review [ref] [--focus <text>] [--adversarial] [--bg] [--model <id>] [--effort <lv>]` | 1 | Have Kiro review the current diff and return structured findings |
+| `/kiro-bridge:review [ref] [--focus <text>] [--adversarial] [--bg] [--signals <path>] [--no-signals] [--model <id>] [--effort <lv>]` | 1 | Have Kiro review the current diff and return structured findings |
 | `/kiro-bridge:task <goal> [--bg] [--write] [--model <id>] [--effort <lv>]` | 2 | Delegate investigation or debugging to Kiro, foreground or background |
 | `/kiro-bridge:spec <feature> [--model <id>] [--effort <lv>]` | 2 | Use Kiro's native spec mode to generate requirements/design under `.kiro/specs/` |
 | `/kiro-bridge:result [job-id] [--follow-up] [--model <id>] [--effort <lv>]` | 2 | Retrieve a background job's result, optionally continuing the session |
@@ -111,6 +112,35 @@ output are **never** stored. Records are garbage-collected by age and a hard
 maximum count. `--session` accepts either the generated record id (from a
 resume hint) or the raw ACP session id, but the record id is preferred because
 it avoids surfacing the raw ACP id.
+
+### Execution evidence
+
+The reviewer agent has no shell (ADR-002), so it cannot run your tests and will
+say so rather than guess. `signals` closes that gap from outside the boundary:
+the run happens in the bridge, and only the captured output travels in the
+payload. The agent gains no new capability.
+
+Either attach evidence you already have —
+
+```
+/kiro-bridge:review --signals /tmp/signals.json
+```
+
+where the file holds any of `failing_tests`, `lint`, `notes` — or let the
+bridge run the suite itself by setting an **argv array** (never a shell string;
+the bridge does not use a shell) in `~/.kiro-bridge/config.json`:
+
+```json
+{ "signals": { "testCommand": ["npm", "test"], "timeoutMs": 120000 } }
+```
+
+A non-zero exit is the signal, not a failure. `--no-signals` opts out for one
+call, and an explicit `--signals` beats a configured command. Signal text is
+redacted and capped on the same outbound path as the diff, and `testCommand`
+is user-config only — a repository's `.kiro/settings/kiro-bridge.json` can
+never hand the bridge something to execute. If collection fails the review
+still runs and the header reads `signals unavailable (...)`, so an absent
+signal is never mistaken for a passing one.
 
 ## Security model
 

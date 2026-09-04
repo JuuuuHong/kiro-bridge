@@ -27,8 +27,9 @@ Claude Code 쪽 판단으로 중재)은 ACP가 여는 네 번째 항목이고 tr
 대화형 브로커링은 Phase 3 과제다.
 
 **신뢰 경계 래핑을 갖춘 구조화 컨텍스트 핸드오프.** 프롬프트 문자열
-대신, kiro-bridge는 diff·관련 파일 발췌·실패한 테스트 출력·제약 조건을
-구조화 페이로드로 넘기고, severity가 붙은 findings JSON을 돌려받는다.
+대신, kiro-bridge는 diff·관련 파일 발췌·제약 조건, 그리고 선택적으로
+테스트 출력 같은 실행 근거([실행 근거](#실행-근거))를 구조화 페이로드로
+넘기고, severity가 붙은 findings JSON을 돌려받는다.
 페이로드가 결정적이므로 실패를 재현하고 회귀 테스트할 수 있다. 그리고
 Kiro의 출력이 Claude Code 컨텍스트로 되돌아오므로, 명령이 아니라
 데이터로 래핑한다 — 자동 반영 없음, 고정 신뢰 경계 래핑, 파싱 성공
@@ -64,7 +65,7 @@ fail-closed로 멈춘다: 프로세스 신원을 `/proc` 또는 `ps`로 읽고, 
 | 커맨드 | Phase | 설명 |
 |---|---|---|
 | `/kiro-bridge:setup` | 1 | 설치·인증 확인 후 번들 Kiro 에이전트 설치 |
-| `/kiro-bridge:review [ref] [--focus <text>] [--adversarial] [--bg] [--model <id>] [--effort <lv>]` | 1 | 현재 diff를 Kiro가 리뷰하고 구조화 findings 반환 |
+| `/kiro-bridge:review [ref] [--focus <text>] [--adversarial] [--bg] [--signals <path>] [--no-signals] [--model <id>] [--effort <lv>]` | 1 | 현재 diff를 Kiro가 리뷰하고 구조화 findings 반환 |
 | `/kiro-bridge:task <목표> [--bg] [--write] [--model <id>] [--effort <lv>]` | 2 | 조사·디버깅을 Kiro에 위임 (foreground 또는 background) |
 | `/kiro-bridge:spec <기능> [--model <id>] [--effort <lv>]` | 2 | Kiro 네이티브 spec 모드로 `.kiro/specs/`에 requirements/design 생성 |
 | `/kiro-bridge:result [job-id] [--follow-up] [--model <id>] [--effort <lv>]` | 2 | 백그라운드 잡 결과 회수, 세션 이어서 후속 질문 가능 |
@@ -105,6 +106,35 @@ id, 에이전트, source kind/command, write 플래그, transport, 선택적 mod
 않는다. 레코드는 보존 기간과 최대 개수 상한으로 GC된다. `--session`은 생성된
 레코드 id(resume 힌트에서 제공)와 원본 ACP 세션 id를 모두 받지만, 원본 ACP
 id 노출을 피하므로 레코드 id가 권장된다.
+
+### 실행 근거
+
+리뷰어 에이전트에는 셸이 없다(ADR-002). 따라서 테스트를 직접 돌릴 수 없고,
+추측하는 대신 그렇다고 밝힌다. `signals`는 이 간극을 경계 바깥에서 메운다 —
+실행은 브리지에서 일어나고 캡처된 출력만 페이로드에 실린다. 에이전트가
+얻는 권한은 없다.
+
+이미 가진 근거를 붙이거나 —
+
+```
+/kiro-bridge:review --signals /tmp/signals.json
+```
+
+(파일에는 `failing_tests`·`lint`·`notes` 중 아무거나 담는다) — 아니면
+`~/.kiro-bridge/config.json` 에 **argv 배열**로 등록해 브리지가 직접 돌리게
+한다. 셸 문자열이 아니다. 브리지는 셸을 쓰지 않는다:
+
+```json
+{ "signals": { "testCommand": ["npm", "test"], "timeoutMs": 120000 } }
+```
+
+0이 아닌 종료코드가 곧 신호이지 실패가 아니다. `--no-signals` 로 한 번만
+끄고, 명시한 `--signals` 가 설정된 명령을 이긴다. 신호 텍스트는 diff와
+같은 경로로 리다이렉션·상한이 적용되며, `testCommand` 는 사용자 설정
+전용이라 저장소의 `.kiro/settings/kiro-bridge.json` 이 브리지에 실행할
+것을 건넬 수 없다. 수집에 실패해도 리뷰는 계속되고 헤더에
+`signals unavailable (...)` 이 찍히므로, 신호가 없는 것을 통과한 것으로
+오해하지 않는다.
 
 ## 보안 모델
 

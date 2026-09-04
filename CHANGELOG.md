@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Execution evidence in review payloads — `signals`.** The reviewer agent has
+  no shell and never will (ADR-002 denies it in every agent under every flag,
+  because kiro-cli offers a trust list and not an OS sandbox, so a trusted
+  shell would be unrestricted execution driven by a model that just read an
+  untrusted diff). The consequence was a reviewer that could only reason
+  statically and had to say "I could not run the tests" exactly where a real
+  defect would surface. `signals` closes that from outside the boundary: the
+  run happens in the bridge and only the captured output travels.
+
+  Two sources, `--no-signals` > `--signals <path>` > configured command >
+  nothing. `--signals` takes a JSON file with any of `failing_tests`, `lint`,
+  `notes` — the path for a caller that already ran the suite, where the bridge
+  executes nothing at all. `signals.testCommand` in `~/.kiro-bridge/config.json`
+  lets the bridge run it, as an **argv array** through `execFile`: there is no
+  shell string to inject into, and the child gets the same allowlisted
+  environment as any kiro-cli spawn, so a test process cannot read credentials
+  the delegated call could not. A non-zero exit is the signal, not an error;
+  only a failure to spawn is, and even that degrades to a `signals unavailable
+  (...)` header rather than failing the review, because losing the signal beats
+  losing the review. Output keeps its *tail* on truncation — that is where the
+  failures and the summary are.
+
+  `testCommand` is user-config only. `applyProjectConfig` merges nothing but
+  redaction patterns, so a `.kiro/settings/kiro-bridge.json` shipped inside a
+  repository can never hand the bridge a command to execute — otherwise
+  "review this repo" would be arbitrary code execution. Background reviews
+  persist only the selector, never collected output, mirroring the existing
+  rule that no diff or file content enters job metadata.
+
+### Fixed
+
+- **README described a payload field that never shipped.** The handoff was
+  advertised as carrying "failing-test output", but `signals` was dead code:
+  `buildPayload` accepted, whitelisted, and redacted the block, `LIMITS.signal`
+  bounded it, a unit test covered it, and the design doc specified it — yet not
+  one of the three `buildPayload` call sites ever passed it. The unit test is
+  why it went unnoticed. Wiring it up (above) makes the sentence true; it is
+  now stated conditionally, since evidence travels only when configured or
+  supplied.
+
+### Added
+
 - **`/kiro-bridge:transfer` — hand a delegated session back to Kiro's own CLI.**
   Prints the `kiro-cli chat --resume-id <session-id>` command that continues a
   recorded conversation in Kiro's TUI, so a delegation started from Claude Code

@@ -54,18 +54,34 @@ function dryRunFields(result) {
   }
 }
 
+// Which execution evidence travelled, and why it did not when collection
+// failed. Bridge-produced, so it stays outside the external/wrapped fence.
+function signalFields(result) {
+  return {
+    signalKeys: result.signalKeys ?? [],
+    signalsNote: result.signalsNote ?? null,
+  }
+}
+
 export function reviewJson(result) {
   if (result.empty) {
     return base('review', { empty: true, ref: result.ref, adversarial: result.adversarial, excludedFiles: result.excludedFiles ?? [], message: result.message })
   }
   if (result.dryRun) {
-    return base('review', { ...dryRunFields(result), ref: result.ref, adversarial: result.adversarial, untracked: result.untracked ?? [] })
+    return base('review', {
+      ...dryRunFields(result),
+      ref: result.ref,
+      adversarial: result.adversarial,
+      untracked: result.untracked ?? [],
+      ...signalFields(result),
+    })
   }
   return base('review', {
     ...delegationFields(result),
     ref: result.ref,
     adversarial: result.adversarial,
     untracked: result.untracked ?? [],
+    ...signalFields(result),
   })
 }
 

@@ -4,6 +4,7 @@
 // boundary is findings.mjs's job, and failure classification is errors.mjs's job.
 import { collectDiff } from './git.mjs'
 import { buildPayload, LIMITS } from './context.mjs'
+import { collectSignals } from './signals.mjs'
 import { parseResponse, wrapForClaude } from './findings.mjs'
 import { loadConfig } from './config.mjs'
 import * as transport from './transport/index.mjs'
@@ -69,8 +70,13 @@ export async function review(options = {}) {
     onEvent,
     onPermissionRequest,
     signal,
+    // Execution evidence for the payload (design §5). See scripts/lib/signals.mjs
+    // — the reviewer agent stays shell-denied either way.
+    signalsPath = null,
+    noSignals = false,
     runFn = transport.run,
     collectDiffFn = collectDiff,
+    collectSignalsFn = collectSignals,
     config = loadConfig(cwd),
     // Foreground review registers its successful resumable ACP turn. The
     // background worker leaves this false and registers only after its atomic
@@ -111,13 +117,23 @@ export async function review(options = {}) {
   const outboundGoal = buildReviewGoal({ goal, focus })
   const constraints = reviewConstraints({ adversarial })
 
+  // Collected only once there is something to review, so a no-op review never
+  // pays for a test run. A collection failure degrades to a note rather than
+  // aborting: losing the signal beats losing the review.
+  const { signals, note: signalsNote } = await collectSignalsFn({
+    cwd,
+    config,
+    signalsPath,
+    disabled: noSignals,
+  })
+
   const {
     payload,
     redactions,
     excludedFiles: payloadExcluded,
     droppedFiles,
   } = buildPayload(
-    { kind: 'review', goal: outboundGoal, diff, files, constraints },
+    { kind: 'review', goal: outboundGoal, diff, files, constraints, signals },
     { redaction: config.redaction },
   )
   const excludedFiles = [...new Set([...collectedExcluded, ...payloadExcluded])]
@@ -136,7 +152,18 @@ export async function review(options = {}) {
 
   // Path for a human to inspect the payload right before it's sent (design §7).
   if (dryRun) {
-    return { dryRun: true, adversarial, payload, redactions, excludedFiles, droppedFiles, untracked, ref: usedRef }
+    return {
+      dryRun: true,
+      adversarial,
+      payload,
+      redactions,
+      excludedFiles,
+      droppedFiles,
+      untracked,
+      ref: usedRef,
+      signalKeys: signals ? Object.keys(signals) : [],
+      signalsNote,
+    }
   }
 
   const agent = `${AGENT_PREFIX}reviewer`
@@ -211,6 +238,11 @@ export async function review(options = {}) {
     redactions,
     excludedFiles,
     droppedFiles,
+    // Which execution evidence travelled with the payload, and why it did not
+    // when it could not be collected. Surfaced so a reader can tell "tests
+    // passed" apart from "no test signal was gathered".
+    signalKeys: signals ? Object.keys(signals) : [],
+    signalsNote,
     metadata: res.metadata,
     sessionRecordId,
   }
@@ -237,6 +269,9 @@ export function formatSummary(result) {
     if (result.droppedFiles > 0) {
       lines.push(`NOTE: ${result.droppedFiles} more changed file(s) exceeded the ${LIMITS.files}-file payload cap and are not listed.`)
     }
+    if (result.signalsNote) {
+      lines.push(`signals unavailable (${result.signalsNote})`)
+    }
     return lines.join('\n')
   }
 
@@ -252,6 +287,14 @@ export function formatSummary(result) {
   }
   if (result.droppedFiles > 0) {
     head.push(`file list capped: ${result.droppedFiles} not listed`)
+  }
+  // Absence is meaningful here: a review with no execution evidence found
+  // whatever it found by reading alone.
+  if (result.signalKeys?.length > 0) {
+    head.push(`signals: ${result.signalKeys.join(', ')}`)
+  }
+  if (result.signalsNote) {
+    head.push(`signals unavailable (${result.signalsNote})`)
   }
   if (!result.parsed.ok) {
     head.push('structuring failed — raw text attached')

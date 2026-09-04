@@ -258,7 +258,7 @@ export function spawnBackground({ command, cwd, payloadOptions = {}, spawnFn = s
 // (design §7: no diff/file contents in the job payload).
 export function reviewBackground({
   ref, focus, adversarial = false, cwd = process.cwd(),
-  timeoutMs, model, effort, spawnFn,
+  timeoutMs, model, effort, signalsPath = null, noSignals = false, spawnFn,
 } = {}) {
   return spawnBackground({
     command: 'review',
@@ -270,6 +270,11 @@ export function reviewBackground({
       timeoutMs,
       model,
       effort,
+      // Only the selector travels, never collected output: a configured
+      // testCommand runs in the worker at execution time (so the signal
+      // matches the code actually reviewed), and --signals is re-read there.
+      signalsPath: signalsPath || null,
+      noSignals: Boolean(noSignals),
     },
     ...(spawnFn ? { spawnFn } : {}),
   })
@@ -383,7 +388,9 @@ const WORKER_EXECUTORS = {
   // ref/focus/adversarial/model/effort/timeout, never diff or file contents.
   // The returned body is the same wrapped findings the foreground path produces.
   async review(job, { cwd, onEvent, runFn, collectDiffFn }) {
-    const { ref, focus, adversarial, timeoutMs, model, effort } = job.meta.payloadOptions
+    const {
+      ref, focus, adversarial, timeoutMs, model, effort, signalsPath, noSignals,
+    } = job.meta.payloadOptions
     const res = await runReview({
       cwd,
       ref: ref || null,
@@ -392,6 +399,8 @@ const WORKER_EXECUTORS = {
       timeoutMs: timeoutMs || REVIEW_TIMEOUT_MS,
       model,
       effort,
+      signalsPath: signalsPath || null,
+      noSignals: Boolean(noSignals),
       onEvent,
       runFn,
       ...(collectDiffFn ? { collectDiffFn } : {}),

@@ -25,6 +25,12 @@ const DEFAULTS = {
   // wildcards. See scripts/lib/env.mjs. The hard denial floor there still
   // applies, so listing a denied name (e.g. AWS_*) has no effect.
   envPassthrough: [],
+  // Optional execution signal for review payloads (design §5, scripts/lib/signals.mjs).
+  // `testCommand` is an argv array the bridge runs itself so the reviewer agent
+  // never needs a shell (ADR-002). User-level only: applyProjectConfig merges
+  // nothing but redaction patterns, so a repository-shipped settings file can
+  // never hand the bridge a command to execute.
+  signals: { testCommand: [], timeoutMs: 120_000 },
   logRetentionDays: 30,
 }
 
@@ -65,6 +71,7 @@ export function loadUserConfig() {
     envPassthrough: Array.isArray(onDisk.envPassthrough)
       ? onDisk.envPassthrough.filter((v) => typeof v === 'string')
       : DEFAULTS.envPassthrough,
+    signals: { ...DEFAULTS.signals, ...(onDisk.signals || {}) },
   }
 }
 
@@ -93,6 +100,8 @@ function stringList(value) {
 //   - entropyThreshold / minSecretLength (raising them would weaken detection)
 //   - envPassthrough (must never widen the child-process env allowlist)
 //   - capabilities / models (version caches are user-scoped state, not policy)
+//   - signals.testCommand (the bridge executes it; accepting one from a
+//     repository would make "review this repo" arbitrary code execution)
 export function applyProjectConfig(config, project = {}) {
   const projectRedaction = project.redaction && typeof project.redaction === 'object'
     ? project.redaction
