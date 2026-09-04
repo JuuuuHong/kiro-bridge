@@ -18,7 +18,7 @@ import * as sessions from './sessions.mjs'
 export function transfer({ selector, cwd = process.cwd() } = {}) {
   const record = sessions.resolveSession({ selector, cwd })
   if (!record) {
-    throw bridgeError(CODES.PROTOCOL, {
+    throw bridgeError(CODES.INVALID_INPUT, {
       reason: selector
         ? `no resumable ACP session matches "${selector}" in this repository`
         : 'no resumable ACP session found in this repository',
@@ -30,7 +30,7 @@ export function transfer({ selector, cwd = process.cwd() } = {}) {
   // is to hand the user a line to run, failing closed is the only safe
   // behaviour: never render a command built from an id we cannot vouch for.
   if (!sessions.isValidSessionId(record.sessionId)) {
-    throw bridgeError(CODES.PROTOCOL, {
+    throw bridgeError(CODES.INVALID_INPUT, {
       reason: `refusing to render a run command for a malformed session id (record ${record.recordId})`,
     })
   }

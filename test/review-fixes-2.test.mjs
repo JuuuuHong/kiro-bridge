@@ -194,7 +194,7 @@ test('transfer: a hand-edited record with a shell-unsafe id is ignored, not rend
     assert.equal(sessions.readRecord(recordId), null, 'read path must reject it too')
     // Nothing resolvable remains, so transfer refuses instead of printing a
     // command built from the tampered id.
-    assert.throws(() => transfer({}), (err) => err.code === CODES.PROTOCOL)
+    assert.throws(() => transfer({}), (err) => err.code === CODES.INVALID_INPUT)
   })
 })
 

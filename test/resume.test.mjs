@@ -51,21 +51,21 @@ function seedResearcher(overrides = {}) {
 
 test('resume: rejects an empty question', async () => {
   seedResearcher()
-  await assert.rejects(() => resume({ question: '  ', cwd: CWD }), (err) => err.code === CODES.PROTOCOL)
+  await assert.rejects(() => resume({ question: '  ', cwd: CWD }), (err) => err.code === CODES.INVALID_INPUT)
 })
 
-test('resume: clear PROTOCOL error when no resumable session exists', async () => {
+test('resume: clear INVALID_INPUT error when no resumable session exists', async () => {
   await assert.rejects(
     () => resume({ question: 'q', cwd: CWD, runFn: async () => { throw new Error('must not call') } }),
-    (err) => err.code === CODES.PROTOCOL && /no resumable ACP session/.test(err.details.reason),
+    (err) => err.code === CODES.INVALID_INPUT && /no resumable ACP session/.test(err.details.reason),
   )
 })
 
-test('resume: clear PROTOCOL error when an explicit --session does not match', async () => {
+test('resume: clear INVALID_INPUT error when an explicit --session does not match', async () => {
   seedResearcher()
   await assert.rejects(
     () => resume({ question: 'q', session: 'no-match', cwd: CWD, runFn: async () => { throw new Error('nope') } }),
-    (err) => err.code === CODES.PROTOCOL && /matches "no-match"/.test(err.details.reason),
+    (err) => err.code === CODES.INVALID_INPUT && /matches "no-match"/.test(err.details.reason),
   )
 })
 

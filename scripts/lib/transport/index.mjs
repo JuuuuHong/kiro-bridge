@@ -88,7 +88,9 @@ export async function run(payload, options = {}) {
     // conversation while the caller believes the prior context was reused.
     // Fail loudly instead (mirrors acp.run's loadSession guard).
     if (rest.sessionId) {
-      throw bridgeError(CODES.PROTOCOL, {
+      // Not INVALID_INPUT: resuming is a legitimate request, and the fix is a
+      // kiro-cli that speaks ACP rather than anything the caller can reword.
+      throw bridgeError(CODES.TRANSPORT_UNAVAILABLE, {
         reason: 'session reuse requires the ACP transport, but only the one-shot subprocess transport is available',
         sessionId: rest.sessionId,
       })

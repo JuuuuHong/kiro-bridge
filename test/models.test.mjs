@@ -190,7 +190,7 @@ test('validateModel passes the value through when discovery is unavailable', asy
 test('assertModelSupported throws a message naming the suggestion', async () => {
   await assert.rejects(
     () => assertModelSupported('sol', { execFileFn: stub() }),
-    (err) => err.code === 'PROTOCOL' && /gpt-5\.6-sol/.test(err.message) && /models/.test(err.details.reason),
+    (err) => err.code === 'INVALID_INPUT' && /gpt-5\.6-sol/.test(err.message) && /models/.test(err.details.reason),
   )
 })
 
@@ -371,7 +371,7 @@ test('the CLI reports an unknown --model through the --json envelope', () => {
   assert.equal(res.status, 1)
   const envelope = JSON.parse(res.stdout)
   assert.equal(envelope.ok, false)
-  assert.equal(envelope.error.code, 'PROTOCOL')
+  assert.equal(envelope.error.code, 'INVALID_INPUT')
   assert.match(envelope.error.message, /gpt-5\.6-sol/)
 })
 

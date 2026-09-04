@@ -48,13 +48,13 @@ export async function resume(options = {}) {
   } = options
 
   if (!question || !String(question).trim()) {
-    throw bridgeError(CODES.PROTOCOL, { reason: 'resume question is empty' })
+    throw bridgeError(CODES.INVALID_INPUT, { reason: 'resume question is empty' })
   }
 
   // Resolve latest by default, or an exact recordId/sessionId when requested.
   const record = sessions.resolveSession({ selector: session, cwd })
   if (!record) {
-    throw bridgeError(CODES.PROTOCOL, {
+    throw bridgeError(CODES.INVALID_INPUT, {
       reason: session
         ? `no resumable ACP session matches "${session}" in this repository`
         : 'no resumable ACP session found in this repository',
@@ -67,7 +67,7 @@ export async function resume(options = {}) {
   // researcher/worker/spec-writer keeps its own agent (and webDerived wrapping).
   const agentDef = agentDefByName(record.agent)
   if (!agentDef) {
-    throw bridgeError(CODES.PROTOCOL, {
+    throw bridgeError(CODES.INVALID_INPUT, {
       reason: `resume record references an unknown agent: ${record.agent}`,
     })
   }

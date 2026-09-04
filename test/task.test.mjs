@@ -54,7 +54,7 @@ test('worker/spec-writer never trust shell either', () => {
 // --- task fg ---
 
 test('task: rejects when goal is empty', async () => {
-  await assert.rejects(() => task({ goal: '  ' }), (err) => err.code === CODES.PROTOCOL)
+  await assert.rejects(() => task({ goal: '  ' }), (err) => err.code === CODES.INVALID_INPUT)
 })
 
 test('task: fg execution — researcher agent, wrapped output, usage recorded', async () => {
@@ -272,7 +272,7 @@ test('result --follow-up: a clear error for a job with no session (subprocess)',
   await runWorker(jobId, { cwd: CWD, runFn: okRun({ sessionId: null, transport: 'subprocess' }) })
   await assert.rejects(
     () => result({ cwd: CWD, jobId, followUp: 'q' }),
-    (err) => err.code === CODES.PROTOCOL,
+    (err) => err.code === CODES.INVALID_INPUT,
   )
 })
 
@@ -305,7 +305,7 @@ test('spec: sends a kind=spec payload to the spec-writer agent', async () => {
 })
 
 test('spec: rejects when goal is empty', async () => {
-  await assert.rejects(() => spec({ goal: '' }), (err) => err.code === CODES.PROTOCOL)
+  await assert.rejects(() => spec({ goal: '' }), (err) => err.code === CODES.INVALID_INPUT)
 })
 
 

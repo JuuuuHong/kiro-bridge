@@ -220,7 +220,7 @@ test('git: an oversized diff surfaces as a classified error', async () => {
   await assert.rejects(
     collectDiff({ cwd: '/repo', execFileFn }),
     (err) => {
-      assert.equal(err.code, CODES.PROTOCOL)
+      assert.equal(err.code, CODES.INVALID_INPUT)
       assert.match(err.details.reason, /exceeded .*MB/)
       return true
     },

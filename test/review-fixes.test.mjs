@@ -76,7 +76,7 @@ test('transport.run: sessionId on the subprocess transport fails loudly', async 
       sessionId: 'sess-123',
     }),
     (err) => {
-      assert.equal(err.code, 'PROTOCOL')
+      assert.equal(err.code, 'TRANSPORT_UNAVAILABLE')
       assert.match(err.details.reason, /session reuse requires the ACP transport/)
       return true
     },
@@ -86,7 +86,7 @@ test('transport.run: sessionId on the subprocess transport fails loudly', async 
 test('transport.run: without a sessionId the subprocess transport is still dispatched to', async () => {
   // The guard must not intercept an ordinary one-shot call. Dispatching with a
   // binary that cannot exist proves we reached subprocess.run (SPAWN_FAILED)
-  // rather than being rejected by the session-reuse guard (PROTOCOL).
+  // rather than being rejected by the session-reuse guard (TRANSPORT_UNAVAILABLE).
   await assert.rejects(
     () => transport.run({ kind: 'task', goal: 'x' }, {
       transport: transport.TRANSPORTS.SUBPROCESS,
@@ -270,7 +270,7 @@ test('transfer: no matching session fails with a clear error', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'kb-transfer4-'))
     try {
       assert.throws(() => transfer({ cwd }), (err) => {
-        assert.equal(err.code, 'PROTOCOL')
+        assert.equal(err.code, 'INVALID_INPUT')
         assert.match(err.details.reason, /no resumable ACP session found/)
         return true
       })

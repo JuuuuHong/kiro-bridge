@@ -17,7 +17,7 @@ const SPEC_CONSTRAINTS = [
 export async function spec(options = {}) {
   const { goal, timeoutMs = DEFAULT_TIMEOUT_MS, ...rest } = options
   if (!goal || !goal.trim()) {
-    throw bridgeError(CODES.PROTOCOL, { reason: 'spec goal is empty' })
+    throw bridgeError(CODES.INVALID_INPUT, { reason: 'spec goal is empty' })
   }
   return runDelegated({
     kind: 'spec',

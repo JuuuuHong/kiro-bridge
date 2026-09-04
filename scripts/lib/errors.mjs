@@ -11,6 +11,14 @@ export const CODES = {
   TRANSPORT_UNAVAILABLE: 'TRANSPORT_UNAVAILABLE',
   CANCELLED: 'CANCELLED',
   PROTOCOL: 'PROTOCOL',
+  // The request itself is the problem: a ref that does not resolve, an empty
+  // goal, a session selector matching nothing, an unknown --model. Separate
+  // from PROTOCOL because naming kiro-cli in those messages sends the reader
+  // looking for a fault in an exchange that is not what went wrong. Note this
+  // does not promise kiro-cli was never run — model validation and transport
+  // capability detection may already have spawned it before the request is
+  // judged unusable — only that the fix is in the request.
+  INVALID_INPUT: 'INVALID_INPUT',
   SPAWN_FAILED: 'SPAWN_FAILED',
   // The turn ended before completing the goal (max_tokens / max_turn_requests).
   // Any partial output cannot be trusted as a finished result.
@@ -102,9 +110,10 @@ export const MESSAGES = {  [CODES.TIMEOUT]: 'Timed out. Returning partial output
   [CODES.THROTTLED]: 'Credits exhausted or throttled. Check usage with `/kiro-bridge:status`.',
   [CODES.TOOL_DENIED]:
     'Kiro could not read a needed file due to insufficient tool permissions. Findings cannot be trusted, so this is promoted to an error.',
-  [CODES.TRANSPORT_UNAVAILABLE]: 'kiro-cli could not be found or executed.',
+  [CODES.TRANSPORT_UNAVAILABLE]: 'kiro-cli could not be found, or cannot provide the transport this request needs.',
   [CODES.CANCELLED]: 'Cancelled.',
   [CODES.PROTOCOL]: 'Protocol exchange with kiro-cli did not match expectations.',
+  [CODES.INVALID_INPUT]: 'The request could not be carried out as given.',
   [CODES.SPAWN_FAILED]: 'Failed to start the kiro-cli process.',
   [CODES.INCOMPLETE]:
     'Kiro stopped before finishing (token or turn limit). Partial output only; not a trustworthy result.',

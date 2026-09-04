@@ -247,9 +247,9 @@ export async function validateModel(model, options = {}) {
   }
 }
 
-// Thrown as a BridgeError so the CLI renders `[PROTOCOL] ...` and a --json
-// caller gets an error envelope, rather than a stack trace for what is an
-// ordinary bad-argument case.
+// Thrown as a BridgeError so the CLI renders `[INVALID_INPUT] ...` and a
+// --json caller gets an error envelope, rather than a stack trace for what is
+// an ordinary bad-argument case.
 export async function assertModelSupported(model, options = {}) {
   const res = await validateModel(model, options)
   if (res.ok) return res
@@ -257,7 +257,7 @@ export async function assertModelSupported(model, options = {}) {
     ? `did you mean ${res.suggestions.join(', ')}?`
     : 'no close match found'
   throw new BridgeError(
-    CODES.PROTOCOL,
+    CODES.INVALID_INPUT,
     `unknown --model "${res.model}" — ${hint}`,
     { reason: "run 'bridge.mjs models' for the ids this kiro-cli accepts", suggestions: res.suggestions },
   )
