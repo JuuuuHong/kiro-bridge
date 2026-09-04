@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
 
 import { buildPayload } from './context.mjs'
+import { readSignalsFile } from './signals.mjs'
 import { parseResponse, wrapForClaude } from './findings.mjs'
 import { loadConfig } from './config.mjs'
 import * as transport from './transport/index.mjs'
@@ -257,22 +258,27 @@ export function spawnBackground({ command, cwd, payloadOptions = {}, spawnFn = s
 // persisted — the diff and file contents are collected later, in the worker
 // (design §7: no diff/file contents in the job payload).
 export function reviewBackground({
-  ref, focus, adversarial = false, cwd = process.cwd(),
+  ref, staged = false, focus, adversarial = false, cwd = process.cwd(),
   timeoutMs, model, effort, signalsPath = null, noSignals = false, spawnFn,
 } = {}) {
+  // Validate here, in the foreground, rather than in the worker. A typo'd path
+  // would otherwise be reported only as a failed job — after the caller had
+  // already been handed a job id and told the review was under way.
+  if (signalsPath && !noSignals) readSignalsFile(signalsPath)
+
   return spawnBackground({
     command: 'review',
     cwd,
     payloadOptions: {
       ref: ref || null,
+      staged: Boolean(staged),
       focus,
       adversarial: Boolean(adversarial),
       timeoutMs,
       model,
       effort,
-      // Only the selector travels, never collected output: a configured
-      // testCommand runs in the worker at execution time (so the signal
-      // matches the code actually reviewed), and --signals is re-read there.
+      // Only the selector travels, never file content: --signals is re-read
+      // in the worker, so no caller-supplied evidence sits in job metadata.
       signalsPath: signalsPath || null,
       noSignals: Boolean(noSignals),
     },
@@ -389,11 +395,12 @@ const WORKER_EXECUTORS = {
   // The returned body is the same wrapped findings the foreground path produces.
   async review(job, { cwd, onEvent, runFn, collectDiffFn }) {
     const {
-      ref, focus, adversarial, timeoutMs, model, effort, signalsPath, noSignals,
+      ref, staged, focus, adversarial, timeoutMs, model, effort, signalsPath, noSignals,
     } = job.meta.payloadOptions
     const res = await runReview({
       cwd,
       ref: ref || null,
+      staged: Boolean(staged),
       focus,
       adversarial: Boolean(adversarial),
       timeoutMs: timeoutMs || REVIEW_TIMEOUT_MS,

@@ -67,7 +67,7 @@ export async function flushOutput(timeoutMs = FLUSH_TIMEOUT_MS) {
 const USAGE = `kiro-bridge
 
   bridge.mjs setup  [--force] [--json]
-  bridge.mjs review [ref]    [--focus <text>] [--adversarial] [--bg] [--dry-run] [--signals <path>] [--no-signals] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet] [--json]
+  bridge.mjs review [ref|A..B] [--staged] [--focus <text>] [--adversarial] [--bg] [--dry-run] [--signals <path>] [--no-signals] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet] [--json]
   bridge.mjs task   <goal>   [--bg] [--write] [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet] [--json]
   bridge.mjs spec   <goal>   [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet] [--json]
   bridge.mjs result [job-id] [--follow-up <question>] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet] [--json]
@@ -97,13 +97,14 @@ const FLAG_NAMES = {
   followUp: '--follow-up',
   session: '--session',
   json: '--json',
+  staged: '--staged',
   signals: '--signals',
   noSignals: '--no-signals',
 }
 
 const ALLOWED_FLAGS = {
   setup: new Set(['force', 'json']),
-  review: new Set(['focus', 'adversarial', 'background', 'dryRun', 'model', 'effort', 'timeoutMs', 'quiet', 'json', 'signals', 'noSignals']),
+  review: new Set(['focus', 'adversarial', 'background', 'dryRun', 'model', 'effort', 'timeoutMs', 'quiet', 'json', 'signals', 'noSignals', 'staged']),
   task: new Set(['background', 'write', 'dryRun', 'model', 'effort', 'timeoutMs', 'quiet', 'json']),
   spec: new Set(['dryRun', 'model', 'effort', 'timeoutMs', 'quiet', 'json']),
   result: new Set(['followUp', 'model', 'effort', 'timeoutMs', 'quiet', 'json']),
@@ -191,6 +192,7 @@ export function parseArgs(argv) {
     else if (arg === '--effort') { flags.effort = optionValue(rest, i, arg); i += 1 }
     else if (arg === '--follow-up') { flags.followUp = optionValue(rest, i, arg); i += 1 }
     else if (arg === '--session') { flags.session = optionValue(rest, i, arg); i += 1 }
+    else if (arg === '--staged') flags.staged = true
     else if (arg === '--no-signals') flags.noSignals = true
     else if (arg === '--signals') { flags.signals = optionValue(rest, i, arg); i += 1 }
     else if (arg.startsWith('--')) throw new Error(`unknown flag: ${arg}`)
@@ -271,6 +273,7 @@ async function main(argv) {
     if (flags.background) {
       const bg = reviewBackground({
         ref: flags._[0] || null,
+        staged: flags.staged,
         focus: flags.focus,
         adversarial: flags.adversarial,
         model: flags.model,
@@ -284,6 +287,7 @@ async function main(argv) {
     }
     const res = await review({
       ref: flags._[0] || null,
+      staged: flags.staged,
       focus: flags.focus,
       adversarial: flags.adversarial,
       dryRun: flags.dryRun,

@@ -9,36 +9,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Review scope: commit ranges and `--staged`.** `ref` was verified with
+  `rev-parse --verify <ref>^{commit}`, which accepts a single commit-ish and
+  nothing else, so `origin/main..HEAD` came back as "unknown git ref". The only
+  expressible comparison was a point against the working tree — meaning a
+  review of "the commits I am about to push" dragged in every unrelated
+  edit sitting in the tree, and isolating them meant stashing first.
+
+  `ref` now takes anything `git diff` does. `..` cannot appear inside a valid
+  ref name, so its presence marks a range unambiguously; both endpoints are
+  verified individually (an omitted side means HEAD, as git reads it) and only
+  then does the spec pass through verbatim — still one element of an argv
+  array, still behind `--`. A bad endpoint is named in the error instead of
+  surfacing as a diff failure. `--staged` adds the index-only comparison.
+
+  Ranges and `--staged` exclude untracked files, because neither comparison
+  involves the working tree. `--staged` is rejected with a range rather than
+  handed to git, since `--cached` compares the index to a single commit and
+  leaves no second endpoint. `--staged` also never probes for HEAD, so it works
+  before the first commit. The default — `HEAD` vs the working tree, untracked
+  included — is unchanged.
+
+### Added
+
 - **Execution evidence in review payloads — `signals`.** The reviewer agent has
   no shell and never will (ADR-002 denies it in every agent under every flag,
-  because kiro-cli offers a trust list and not an OS sandbox, so a trusted
-  shell would be unrestricted execution driven by a model that just read an
-  untrusted diff). The consequence was a reviewer that could only reason
-  statically and had to say "I could not run the tests" exactly where a real
-  defect would surface. `signals` closes that from outside the boundary: the
-  run happens in the bridge and only the captured output travels.
+  because kiro-cli offers a trust list and not an OS sandbox). The consequence
+  was a reviewer that could only reason statically and had to say "I could not
+  run the tests" exactly where a real defect would surface.
 
-  Two sources, `--no-signals` > `--signals <path>` > configured command >
-  nothing. `--signals` takes a JSON file with any of `failing_tests`, `lint`,
-  `notes` — the path for a caller that already ran the suite, where the bridge
-  executes nothing at all. `signals.testCommand` in `~/.kiro-bridge/config.json`
-  lets the bridge run it, as an **argv array** through `execFile`: there is no
-  shell string to inject into, and the child gets the same allowlisted
-  environment as any kiro-cli spawn, so a test process cannot read credentials
-  the delegated call could not. A non-zero exit is the signal, not an error;
-  only a failure to spawn is, and even that degrades to a `signals unavailable
-  (...)` header rather than failing the review, because losing the signal beats
-  losing the review. Output keeps its *tail* on truncation — that is where the
-  failures and the summary are.
+  `--signals <path>` closes that: a JSON file holding any of `failing_tests`,
+  `lint`, `notes`, written by whoever already ran the suite. The bridge reads
+  it and runs nothing. `--no-signals` opts out for one call. Signal text is
+  redacted and capped on the same outbound path as the diff, tail-first so the
+  failures and summary at the end of a run survive truncation.
 
-  `testCommand` is user-config only. `applyProjectConfig` merges nothing but
-  redaction patterns, so a `.kiro/settings/kiro-bridge.json` shipped inside a
-  repository can never hand the bridge a command to execute — otherwise
-  "review this repo" would be arbitrary code execution. Background reviews
-  persist only the selector, never collected output, mirroring the existing
-  rule that no diff or file content enters job metadata.
+### Security
+
+- **The bridge no longer runs a configured test command.** A `signals.testCommand`
+  the bridge executed itself was added and removed before any release; it is
+  documented here because it briefly reached `main`.
+
+  The reasoning behind it was wrong in a specific way. Moving execution out of
+  the agent removed the *model's* ability to drive it and left the
+  *repository's* ability untouched: the command a repo answers to — `npm test`,
+  `make test`, `npx jest` — is defined by that repo's own files, so running it
+  executes the code under review. `review --dry-run`, which the skill doc calls
+  the safe first move on an unfamiliar repo, ran that repo's `package.json`
+  because collection happened before the dry-run branch. The environment
+  allowlist is no defence: `HOME` is forwarded, so the child could read
+  `~/.aws/credentials` off disk. It also opened an outbound channel whose
+  format an attacker controls, past redaction patterns that only match secrets
+  in ordinary shapes.
+
+  No flag would have fixed it. The flag would be typed by the model reading the
+  skill doc — the thing ADR-002 says not to rely on — and standing config is
+  worse, following the user into every clone. The decision to run a
+  repository's code already exists one layer up, in the host's permission
+  prompt, where a person sees it; a quieter second copy inside the bridge could
+  only subtract safety. Configuration for it is gone rather than deprecated, so
+  a stale `signals.testCommand` on disk is inert.
 
 ### Fixed
+
+- **Signal truncation defeated itself.** `tailTruncate` kept the tail of a run
+  but overshot `LIMITS.signal` by the length of its own notice, and
+  `buildPayload`'s cap then truncated from the head — cutting off exactly the
+  tail the function existed to preserve. It now fits the cap, and a test covers
+  the composition rather than each half.
 
 - **README described a payload field that never shipped.** The handoff was
   advertised as carrying "failing-test output", but `signals` was dead code:

@@ -200,7 +200,8 @@ test('reviewBackground: persists only selectors — never diff, files, or collec
   assert.equal(job.meta.command, 'review')
   const po = job.meta.payloadOptions
   assert.deepEqual(Object.keys(po).sort(), [
-    'adversarial', 'effort', 'focus', 'model', 'noSignals', 'ref', 'signalsPath', 'timeoutMs',
+    'adversarial', 'effort', 'focus', 'model', 'noSignals', 'ref', 'signalsPath',
+    'staged', 'timeoutMs',
   ])
   assert.equal(po.ref, 'main')
   assert.equal(po.focus, 'concurrency')
@@ -211,6 +212,7 @@ test('reviewBackground: persists only selectors — never diff, files, or collec
   // so captured test output never sits in job metadata waiting to be read.
   assert.equal(po.signalsPath, null)
   assert.equal(po.noSignals, false)
+  assert.equal(po.staged, false, 'diff scope travels as a selector, resolved in the worker')
   assert.ok(!('signals' in po), 'collected signal output must never be persisted')
   assert.equal(job.meta.pid, 5151, 'parent records the spawned pid while queued')
 })

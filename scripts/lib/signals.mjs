@@ -2,49 +2,60 @@
 //
 // A reviewer that cannot run anything can only reason statically: it is forced
 // to say "I could not execute the tests" exactly where a real defect would show
-// up. The fix is *not* to trust the shell tool — ADR-002 denies it in every
-// agent under every flag, and kiro-cli offers only a trust list, never an OS
-// sandbox, so a trusted shell would be unrestricted execution on the user's
-// machine driven by a model that just read an untrusted diff.
+// up. The fix is not to trust the shell tool — ADR-002 denies it in every agent
+// under every flag, and kiro-cli offers only a trust list, never an OS sandbox.
+// Instead, whoever already ran the tests hands the output over and the reviewer
+// reads it as data.
 //
-// Instead the execution happens on this side of the boundary and only its
-// captured *output* crosses. Two sources, and the reviewer gains nothing from
-// either:
+// The bridge executes NOTHING here, deliberately.
 //
-//   1. `signals.testCommand` in the user config — the bridge runs it itself,
-//      as an argv array through execFile. There is no shell string to inject
-//      into (the git.mjs rule), and the child inherits the same allowlisted
-//      environment as any kiro-cli spawn, so a test process cannot read
-//      credentials the delegated call could not.
-//   2. `--signals <path>` — a JSON file written by whoever already ran the
-//      tests. The bridge executes nothing at all.
+// An earlier version let the user configure a `signals.testCommand` that the
+// bridge would run itself. That was the wrong layer. The command a repository
+// answers to — `npm test`, `make test`, `npx jest` — is defined *by that
+// repository*, so running it means executing the reviewed code. Moving the
+// execution out of the agent and into the bridge removed the model's ability to
+// drive it and left the repository's ability untouched; `review --dry-run` on
+// an unfamiliar repo, the step the docs call the safe first move, ran that
+// repo's package.json. No flag fixes this: the flag would be typed by the model
+// reading the skill doc, which is precisely what ADR-002 says not to rely on,
+// and standing config is worse because it follows the user into every clone.
 //
-// Both paths end in `buildPayload`, which scrubs and caps every signal string
-// on the standard outbound route, so a secret printed by a failing test is
-// masked like any other outbound text.
-//
-// Source 1 is deliberately user-config-only. `applyProjectConfig` merges
-// nothing but redaction patterns, so a `.kiro/settings/kiro-bridge.json` that
-// ships inside a repository can never hand the bridge a command to execute —
-// which would otherwise turn "review this repo" into arbitrary code execution.
-import { execFile } from 'node:child_process'
+// The decision of whether to run a repository's code already exists one layer
+// up, in the host's permission prompt, where a person sees it and answers. A
+// second, quieter copy of that decision inside the bridge could only subtract
+// safety. So the caller runs the tests under those existing controls and passes
+// the result here with --signals.
 import { readFileSync } from 'node:fs'
 import { LIMITS } from './context.mjs'
-import { childEnvFromConfig } from './env.mjs'
 
 // The whitelist buildPayload also enforces. Kept in sync deliberately: this
 // module rejects unknown keys early so a typo surfaces here rather than being
 // silently dropped at the payload boundary.
 export const SIGNAL_KEYS = ['failing_tests', 'lint', 'notes']
 
-export const DEFAULT_TEST_TIMEOUT_MS = 120_000
+// Truncation keeps the tail: a test run puts its failures and summary at the
+// end, so cutting from the front would throw away the answer.
+//
+// The result must fit LIMITS.signal *exactly*. buildPayload caps every signal
+// string with its own truncate(), which cuts from the head — so overshooting
+// here by even the length of the notice hands the tail straight back to a
+// head-truncation and defeats the whole point.
+export function tailTruncate(text, max = LIMITS.signal) {
+  if (typeof text !== 'string' || text.length <= max) return text
+  const notice = (dropped) => `… [truncated ${dropped} leading chars]\n`
+  // The notice's length depends on the number it prints, which depends on how
+  // much room the notice leaves. Two passes settle it — the digit count can
+  // only shrink, never grow, on the second.
+  let keep = max - notice(text.length - max).length
+  keep = max - notice(text.length - keep).length
+  if (keep <= 0) return text.slice(-max)
+  const out = `${notice(text.length - keep)}${text.slice(-keep)}`
+  return out.length <= max ? out : out.slice(-max)
+}
 
-// Generous relative to LIMITS.signal: a test runner can emit megabytes, and we
-// want the *tail* of that, not a truncation of the first 20KB of setup noise.
-const MAX_CAPTURE_BYTES = 4 * 1024 * 1024
-
-// Keep only whitelisted, non-empty string entries. Anything else is dropped
-// rather than coerced, so a malformed signals file cannot inject structure.
+// Keep only whitelisted, non-empty string entries, each bounded to the payload
+// cap. Anything else is dropped rather than coerced, so a malformed signals
+// file cannot inject structure.
 export function normalizeSignals(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const out = {}
@@ -53,82 +64,16 @@ export function normalizeSignals(raw) {
     if (typeof value !== 'string') continue
     const trimmed = value.trim()
     if (trimmed === '') continue
-    out[key] = trimmed
+    out[key] = tailTruncate(trimmed)
   }
   return Object.keys(out).length > 0 ? out : null
 }
 
-// Truncation keeps the tail. A failing test run puts the failures and the
-// summary at the end; cutting from the front would throw away the answer.
-export function tailTruncate(text, max = LIMITS.signal) {
-  if (typeof text !== 'string' || text.length <= max) return text
-  const kept = text.slice(text.length - max)
-  return `… [truncated ${text.length - max} leading chars]\n${kept}`
-}
-
-// argv array only. A string is rejected with a message that names the fix,
-// because the obvious thing to write is "npm test" and silently splitting that
-// on whitespace would break the first command containing a quoted argument.
-export function validateTestCommand(command) {
-  if (command == null) return null
-  if (!Array.isArray(command)) {
-    throw new Error(
-      'signals.testCommand must be an argv array, not a string '
-      + '(e.g. ["npm", "test"]) — the bridge never runs a shell',
-    )
-  }
-  const argv = command.filter((entry) => typeof entry === 'string' && entry.trim() !== '')
-  if (argv.length !== command.length) {
-    throw new Error('signals.testCommand contains a non-string or empty entry')
-  }
-  return argv.length > 0 ? argv : null
-}
-
-// Run the configured command and capture combined output.
-//
-// A non-zero exit is the *expected* interesting case, not an error: failing
-// tests are the signal. Only a failure to spawn at all is reported as one.
-export function runTestCommand(argv, options = {}) {
-  const {
-    cwd = process.cwd(),
-    config = {},
-    timeoutMs = DEFAULT_TEST_TIMEOUT_MS,
-    execFileFn = execFile,
-  } = options
-  const [bin, ...args] = argv
-  return new Promise((resolve) => {
-    execFileFn(
-      bin,
-      args,
-      {
-        cwd,
-        timeout: timeoutMs,
-        maxBuffer: MAX_CAPTURE_BYTES,
-        env: childEnvFromConfig(config),
-      },
-      (err, stdout, stderr) => {
-        const combined = `${String(stdout || '')}${String(stderr || '')}`.trim()
-        // Spawn failures (ENOENT, EACCES) produce no output and mean the
-        // command is misconfigured — say so instead of sending an empty signal
-        // that reads as "tests passed".
-        if (err && combined === '' && !err.killed) {
-          resolve({
-            ok: false,
-            reason: `signals.testCommand failed to run: ${err.code || err.message}`,
-          })
-          return
-        }
-        const timedOut = Boolean(err?.killed)
-        const header = timedOut
-          ? `$ ${argv.join(' ')}\n[timed out after ${timeoutMs}ms — output truncated]`
-          : `$ ${argv.join(' ')}\n[exit ${err?.code ?? 0}]`
-        resolve({ ok: true, text: tailTruncate(`${header}\n${combined}`) })
-      },
-    )
-  })
-}
-
 // Read a caller-supplied signals JSON file.
+//
+// This throws rather than degrading to "no signal". The path was named
+// explicitly for this call, so a typo must not produce a review that silently
+// went out with no evidence while the caller believed it carried some.
 export function readSignalsFile(path, { readFileFn = readFileSync } = {}) {
   let parsed
   try {
@@ -145,41 +90,15 @@ export function readSignalsFile(path, { readFileFn = readFileSync } = {}) {
   return normalized
 }
 
-// Resolve the signals block for one invocation.
-//
-// Precedence: an explicit flag on *this* call beats standing configuration.
-//   --no-signals  -> nothing
-//   --signals P   -> the file at P, and the bridge runs nothing
-//   testCommand   -> the bridge runs it
-//   otherwise     -> nothing
-//
-// Returns { signals, note } where note (if any) is a human-facing line about
-// what could not be collected. A collection failure never fails the review:
-// losing the signal is strictly better than losing the review.
-export async function collectSignals(options = {}) {
+// Resolve the signals block for one invocation. Reads a file at most; runs
+// nothing. --no-signals wins over --signals so a caller can suppress evidence
+// without editing the command that supplied it.
+export function collectSignals(options = {}) {
   const {
-    cwd = process.cwd(),
-    config = {},
     signalsPath = null,
     disabled = false,
-    runTestCommandFn = runTestCommand,
     readSignalsFileFn = readSignalsFile,
   } = options
-
-  if (disabled) return { signals: null, note: null }
-
-  if (signalsPath) {
-    return { signals: readSignalsFileFn(signalsPath), note: null }
-  }
-
-  const argv = validateTestCommand(config.signals?.testCommand)
-  if (!argv) return { signals: null, note: null }
-
-  const result = await runTestCommandFn(argv, {
-    cwd,
-    config,
-    timeoutMs: config.signals?.timeoutMs || DEFAULT_TEST_TIMEOUT_MS,
-  })
-  if (!result.ok) return { signals: null, note: result.reason }
-  return { signals: { failing_tests: result.text }, note: null }
+  if (disabled || !signalsPath) return { signals: null }
+  return { signals: readSignalsFileFn(signalsPath) }
 }

@@ -60,3 +60,10 @@ These are documented design limits, not defects:
   wrong or hostile-sounding answer.
 - Anything requiring an attacker who already has write access to your home
   directory or your kiro-cli credentials.
+- **Evidence you supply yourself.** `--signals` sends a file you named. Its
+  contents go through the same redaction as the diff, but you chose them, and
+  the patterns match secrets in ordinary shapes rather than ones reformatted
+  past them. The bridge never generates that file, and never runs a command to
+  produce it — running a repository's test command would be executing the code
+  under review, and that decision belongs to the permission prompt of whatever
+  is driving the bridge, not to the bridge.

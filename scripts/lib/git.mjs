@@ -68,6 +68,21 @@ export function symlinkExclusionReason(path, { cwd = process.cwd(), excludeFiles
   return null
 }
 
+// A ref argument may be a single commit-ish or a diff range. `..` cannot appear
+// inside a valid git ref name, so its presence unambiguously marks a range —
+// `A..B` diffs the endpoints, `A...B` diffs against their merge base, and an
+// omitted side means HEAD, exactly as git reads them. An empty spec keeps the
+// historical meaning: the given point (or HEAD) against the working tree.
+const RANGE_RE = /^(.*?)(\.{2,3})(.*)$/
+
+export function parseRefSpec(ref) {
+  if (!ref) return null
+  const match = RANGE_RE.exec(ref)
+  if (!match) return { kind: 'point', spec: ref, endpoints: [ref] }
+  const [, left, , right] = match
+  return { kind: 'range', spec: ref, endpoints: [left || 'HEAD', right || 'HEAD'] }
+}
+
 export async function isGitRepo(options = {}) {
   try {
     const out = await run(['rev-parse', '--is-inside-work-tree'], options)
@@ -79,14 +94,25 @@ export async function isGitRepo(options = {}) {
 
 // Confirm the ref actually exists first, so a typo comes back as a clear
 // error rather than a diff failure.
+// Every endpoint is verified before the spec reaches `git diff`. The spec is
+// then passed through verbatim — it is still only ever one element of an argv
+// array, so there is nothing to inject into, and `--` continues to separate it
+// from pathspecs.
 export async function resolveRef(ref, options = {}) {
-  if (!ref) return null
-  try {
-    await run(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], options)
-    return ref
-  } catch {
-    throw bridgeError(CODES.PROTOCOL, { reason: `unknown git ref: ${ref}` })
+  const parsed = parseRefSpec(ref)
+  if (!parsed) return null
+  for (const endpoint of parsed.endpoints) {
+    try {
+      await run(['rev-parse', '--verify', '--quiet', `${endpoint}^{commit}`], options)
+    } catch {
+      throw bridgeError(CODES.PROTOCOL, {
+        reason: parsed.kind === 'range'
+          ? `unknown git ref in range ${ref}: ${endpoint}`
+          : `unknown git ref: ${ref}`,
+      })
+    }
   }
+  return parsed
 }
 
 // Split a NUL-delimited git path list. `-z` output is the only form that is
@@ -100,12 +126,20 @@ function splitZ(out) {
   return String(out).split('\0').filter((path) => path !== '')
 }
 
-function diffArgs(ref, nameOnly, paths = null) {
+function diffArgs(spec, { nameOnly = false, staged = false, paths = null } = {}) {
   const base = ['diff']
   // -z implies raw (unquoted) paths, so it must accompany every --name-only read.
   if (nameOnly) base.push('--name-only', '-z')
-  // Compare against ref if given, otherwise against HEAD (staged + unstaged).
-  base.push(ref || 'HEAD')
+  // --cached narrows the comparison to the index. Without it the comparison
+  // reaches the working tree, which is why untracked files are collected only
+  // in that case.
+  if (staged) base.push('--cached')
+  // A verified spec passes through verbatim: `A..B` and `A...B` are git diff
+  // syntax, and it remains one element of an argv array either way.
+  if (spec) base.push(spec.spec)
+  // Bare `git diff --cached` already means index-vs-HEAD. Naming HEAD here
+  // would be redundant, and wrong in a repository that has no HEAD yet.
+  else if (!staged) base.push('HEAD')
   base.push('--')
   // Use literal pathspecs so a repository path beginning with ':' cannot be
   // interpreted as pathspec magic. An empty path list is handled by the caller.
@@ -143,22 +177,37 @@ async function headExists(options = {}) {
 }
 
 export async function collectDiff(options = {}) {
-  const { ref = null, excludeFiles = [] } = options
+  const { ref = null, excludeFiles = [], staged = false } = options
 
   if (!(await isGitRepo(options))) {
     throw bridgeError(CODES.PROTOCOL, { reason: 'not a git repository' })
   }
-  await resolveRef(ref, options)
+  const spec = await resolveRef(ref, options)
 
-  // Without an explicit ref, comparing requires a HEAD to compare against.
-  const hasBase = ref ? true : await headExists(options)
+  // `git diff --cached A..B` is not a thing: --cached compares the index to one
+  // commit, so a range leaves nothing for the index to be. Reject it rather
+  // than let git emit a less obvious error.
+  if (staged && spec?.kind === 'range') {
+    throw bridgeError(CODES.PROTOCOL, {
+      reason: `--staged compares the index to a single commit, so it cannot take the range ${ref}`,
+    })
+  }
+
+  // The working tree is only in scope for the default comparison. A range
+  // compares two recorded points, and --staged compares the index — in neither
+  // case would an untracked file belong in the result.
+  const worktreeInScope = !spec && !staged
+
+  // Comparing needs something to compare against. An explicit spec has already
+  // been verified, and `git diff --cached` is well defined even before the
+  // first commit, so only the default path has to look for HEAD.
+  const hasBase = spec || staged ? true : await headExists(options)
 
   // Resolve names before content so excluded paths never enter the outbound
   // diff buffer at all. The full file list is retained for the exclusion audit.
   const [nameOnly, untracked] = await Promise.all([
-    hasBase ? run(diffArgs(ref, true), options) : Promise.resolve(''),
-    // If ref was given, this is a comparison against that point, so working-tree state is not mixed in.
-    ref ? Promise.resolve([]) : listUntracked(options),
+    hasBase ? run(diffArgs(spec, { nameOnly: true, staged }), options) : Promise.resolve(''),
+    worktreeInScope ? listUntracked(options) : Promise.resolve([]),
   ])
 
   const tracked = splitZ(nameOnly)
@@ -171,7 +220,7 @@ export async function collectDiff(options = {}) {
   const allowedUntracked = untracked.filter((path) => !isWithheld(path))
   const excludedFiles = [...tracked, ...untracked].filter(isWithheld)
   const diff = allowedTracked.length > 0
-    ? await run(diffArgs(ref, false, allowedTracked), options)
+    ? await run(diffArgs(spec, { staged, paths: allowedTracked }), options)
     : ''
 
   const files = allowedTracked.map((path) => ({ path, reason: 'changed in diff' }))
@@ -180,7 +229,9 @@ export async function collectDiff(options = {}) {
     files.push({ path, reason: 'untracked new file — not in diff, read it directly to review' })
   }
 
-  return { diff, files, excludedFiles, untracked: allowedUntracked, ref: ref || 'HEAD' }
+  // A label for humans and for the result envelope, not a ref to resolve again.
+  const label = spec ? spec.spec : (staged ? 'the index (staged)' : 'HEAD')
+  return { diff, files, excludedFiles, untracked: allowedUntracked, ref: label, staged }
 }
 
 export async function currentBranch(options = {}) {

@@ -60,6 +60,7 @@ export async function review(options = {}) {
   const {
     cwd = process.cwd(),
     ref = null,
+    staged = false,
     goal = DEFAULT_GOAL,
     focus,
     adversarial = false,
@@ -70,8 +71,8 @@ export async function review(options = {}) {
     onEvent,
     onPermissionRequest,
     signal,
-    // Execution evidence for the payload (design §5). See scripts/lib/signals.mjs
-    // — the reviewer agent stays shell-denied either way.
+    // Execution evidence supplied by the caller (design §5). See
+    // scripts/lib/signals.mjs — the bridge never runs anything to produce it.
     signalsPath = null,
     noSignals = false,
     runFn = transport.run,
@@ -94,6 +95,7 @@ export async function review(options = {}) {
   } = await collectDiffFn({
     cwd,
     ref,
+    staged,
     excludeFiles: config.redaction.excludeFiles,
   })
 
@@ -117,15 +119,9 @@ export async function review(options = {}) {
   const outboundGoal = buildReviewGoal({ goal, focus })
   const constraints = reviewConstraints({ adversarial })
 
-  // Collected only once there is something to review, so a no-op review never
-  // pays for a test run. A collection failure degrades to a note rather than
-  // aborting: losing the signal beats losing the review.
-  const { signals, note: signalsNote } = await collectSignalsFn({
-    cwd,
-    config,
-    signalsPath,
-    disabled: noSignals,
-  })
+  // Reads the caller's file; runs nothing (see scripts/lib/signals.mjs). Safe
+  // to resolve before the dry-run branch, so the preview shows the real payload.
+  const { signals } = collectSignalsFn({ signalsPath, disabled: noSignals })
 
   const {
     payload,
@@ -162,7 +158,6 @@ export async function review(options = {}) {
       untracked,
       ref: usedRef,
       signalKeys: signals ? Object.keys(signals) : [],
-      signalsNote,
     }
   }
 
@@ -238,11 +233,9 @@ export async function review(options = {}) {
     redactions,
     excludedFiles,
     droppedFiles,
-    // Which execution evidence travelled with the payload, and why it did not
-    // when it could not be collected. Surfaced so a reader can tell "tests
-    // passed" apart from "no test signal was gathered".
+    // Which execution evidence travelled with the payload. Absence is
+    // meaningful: the review then found what it found by reading alone.
     signalKeys: signals ? Object.keys(signals) : [],
-    signalsNote,
     metadata: res.metadata,
     sessionRecordId,
   }
@@ -269,9 +262,6 @@ export function formatSummary(result) {
     if (result.droppedFiles > 0) {
       lines.push(`NOTE: ${result.droppedFiles} more changed file(s) exceeded the ${LIMITS.files}-file payload cap and are not listed.`)
     }
-    if (result.signalsNote) {
-      lines.push(`signals unavailable (${result.signalsNote})`)
-    }
     return lines.join('\n')
   }
 
@@ -292,9 +282,6 @@ export function formatSummary(result) {
   // whatever it found by reading alone.
   if (result.signalKeys?.length > 0) {
     head.push(`signals: ${result.signalKeys.join(', ')}`)
-  }
-  if (result.signalsNote) {
-    head.push(`signals unavailable (${result.signalsNote})`)
   }
   if (!result.parsed.ok) {
     head.push('structuring failed — raw text attached')

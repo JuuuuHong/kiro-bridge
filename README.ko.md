@@ -65,7 +65,7 @@ fail-closed로 멈춘다: 프로세스 신원을 `/proc` 또는 `ps`로 읽고, 
 | 커맨드 | Phase | 설명 |
 |---|---|---|
 | `/kiro-bridge:setup` | 1 | 설치·인증 확인 후 번들 Kiro 에이전트 설치 |
-| `/kiro-bridge:review [ref] [--focus <text>] [--adversarial] [--bg] [--signals <path>] [--no-signals] [--model <id>] [--effort <lv>]` | 1 | 현재 diff를 Kiro가 리뷰하고 구조화 findings 반환 |
+| `/kiro-bridge:review [ref|A..B] [--staged] [--focus <text>] [--adversarial] [--bg] [--signals <path>] [--no-signals] [--model <id>] [--effort <lv>]` | 1 | 현재 diff를 Kiro가 리뷰하고 구조화 findings 반환 |
 | `/kiro-bridge:task <목표> [--bg] [--write] [--model <id>] [--effort <lv>]` | 2 | 조사·디버깅을 Kiro에 위임 (foreground 또는 background) |
 | `/kiro-bridge:spec <기능> [--model <id>] [--effort <lv>]` | 2 | Kiro 네이티브 spec 모드로 `.kiro/specs/`에 requirements/design 생성 |
 | `/kiro-bridge:result [job-id] [--follow-up] [--model <id>] [--effort <lv>]` | 2 | 백그라운드 잡 결과 회수, 세션 이어서 후속 질문 가능 |
@@ -107,34 +107,52 @@ id, 에이전트, source kind/command, write 플래그, transport, 선택적 mod
 레코드 id(resume 힌트에서 제공)와 원본 ACP 세션 id를 모두 받지만, 원본 ACP
 id 노출을 피하므로 레코드 id가 권장된다.
 
+### 리뷰 범위 지정
+
+`ref` 인자는 `git diff`가 받는 형태를 그대로 받는다. 기본 동작은 그대로다 —
+`HEAD` 대 워킹트리, 추적되지 않는 파일 포함.
+
+| 형태 | 비교 대상 |
+|---|---|
+| *(없음)* | `HEAD` 대 워킹트리 — staged·unstaged·untracked 전부 |
+| `<commit-ish>` | 해당 지점 대 **추적 중인** 워킹트리 상태 (`HEAD~3`, `origin/main`, 태그). untracked 파일은 포함되지 않는다 |
+| `A..B` | 두 끝점끼리. 워킹트리는 건드리지 않음 |
+| `A...B` | `A`와 `B`의 merge base 대 `B` |
+| `--staged` | 인덱스만 — `git add` 로 올린 것 |
+
+범위와 `--staged` 는 추적되지 않는 파일을 의도적으로 제외한다. 어느 쪽도
+워킹트리를 비교 대상으로 삼지 않기 때문이고, 그게 이 형태들의 존재 이유다 —
+푸시 전에 `origin/main..HEAD` 를 리뷰하면 내 커밋만 나가고, 진행 중인 다른
+작업을 격리하려고 stash 할 필요가 없다.
+
+끝점은 `git diff` 에 닿기 전에 전부 검증하므로, 오타는 diff 오류가 아니라
+어느 쪽이 틀렸는지 지목하는 메시지로 돌아온다. `--staged` 는 범위와 함께
+쓸 수 없다 — `--cached` 는 인덱스를 단일 커밋과 비교하므로 두 번째 끝점을
+둘 자리가 없다.
+
 ### 실행 근거
 
 리뷰어 에이전트에는 셸이 없다(ADR-002). 따라서 테스트를 직접 돌릴 수 없고,
-추측하는 대신 그렇다고 밝힌다. `signals`는 이 간극을 경계 바깥에서 메운다 —
-실행은 브리지에서 일어나고 캡처된 출력만 페이로드에 실린다. 에이전트가
-얻는 권한은 없다.
-
-이미 가진 근거를 붙이거나 —
+추측하는 대신 그렇다고 밝힌다. `signals` 는 **테스트를 이미 돌린 쪽**이 그
+출력을 데이터로 넘기는 통로다:
 
 ```
 /kiro-bridge:review --signals /tmp/signals.json
 ```
 
-(파일에는 `failing_tests`·`lint`·`notes` 중 아무거나 담는다) — 아니면
-`~/.kiro-bridge/config.json` 에 **argv 배열**로 등록해 브리지가 직접 돌리게
-한다. 셸 문자열이 아니다. 브리지는 셸을 쓰지 않는다:
+파일에는 `failing_tests`·`lint`·`notes` 중 아무거나 담는다. `--no-signals` 로
+한 번만 끌 수 있다.
 
-```json
-{ "signals": { "testCommand": ["npm", "test"], "timeoutMs": 120000 } }
-```
+**브리지는 이를 만들기 위해 아무것도 실행하지 않는다.** 의도적이다. 저장소가
+응답하는 명령 — `npm test`, `make test` — 은 그 저장소가 정의하므로, 실행은
+곧 리뷰 대상 코드의 실행이다. 그 판단은 이미 한 계층 위, 에이전트 호스트가
+사람에게 보여주는 권한 프롬프트에 있다. 브리지 안에 더 조용한 사본을 하나 더
+두면 안전이 더해지는 게 아니라 빠진다.
 
-0이 아닌 종료코드가 곧 신호이지 실패가 아니다. `--no-signals` 로 한 번만
-끄고, 명시한 `--signals` 가 설정된 명령을 이긴다. 신호 텍스트는 diff와
-같은 경로로 리다이렉션·상한이 적용되며, `testCommand` 는 사용자 설정
-전용이라 저장소의 `.kiro/settings/kiro-bridge.json` 이 브리지에 실행할
-것을 건넬 수 없다. 수집에 실패해도 리뷰는 계속되고 헤더에
-`signals unavailable (...)` 이 찍히므로, 신호가 없는 것을 통과한 것으로
-오해하지 않는다.
+신호 텍스트는 diff와 같은 경로로 리다이렉션·상한이 적용되지만, 보증이 아니라
+최선의 노력으로 여겨야 한다 — 파일 내용을 정하는 건 사용자이고, 리다이렉션
+패턴은 통상적인 형태의 비밀에만 걸리지 사용자가 형식을 바꾼 것까지 잡지
+않는다. 보내면 안 되는 것은 넣지 말 것.
 
 ## 보안 모델
 

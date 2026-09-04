@@ -68,7 +68,7 @@ tested there.
 | Command | Phase | Description |
 |---|---|---|
 | `/kiro-bridge:setup` | 1 | Verify install/auth and install the bundled Kiro agents |
-| `/kiro-bridge:review [ref] [--focus <text>] [--adversarial] [--bg] [--signals <path>] [--no-signals] [--model <id>] [--effort <lv>]` | 1 | Have Kiro review the current diff and return structured findings |
+| `/kiro-bridge:review [ref|A..B] [--staged] [--focus <text>] [--adversarial] [--bg] [--signals <path>] [--no-signals] [--model <id>] [--effort <lv>]` | 1 | Have Kiro review the current diff and return structured findings |
 | `/kiro-bridge:task <goal> [--bg] [--write] [--model <id>] [--effort <lv>]` | 2 | Delegate investigation or debugging to Kiro, foreground or background |
 | `/kiro-bridge:spec <feature> [--model <id>] [--effort <lv>]` | 2 | Use Kiro's native spec mode to generate requirements/design under `.kiro/specs/` |
 | `/kiro-bridge:result [job-id] [--follow-up] [--model <id>] [--effort <lv>]` | 2 | Retrieve a background job's result, optionally continuing the session |
@@ -113,34 +113,53 @@ maximum count. `--session` accepts either the generated record id (from a
 resume hint) or the raw ACP session id, but the record id is preferred because
 it avoids surfacing the raw ACP id.
 
+### Choosing what gets reviewed
+
+The `ref` argument accepts anything `git diff` does, and the default is
+unchanged: `HEAD` against the working tree, untracked files included.
+
+| Form | What it compares |
+|---|---|
+| *(none)* | `HEAD` vs the working tree — staged, unstaged, and untracked |
+| `<commit-ish>` | that point vs *tracked* working-tree state (`HEAD~3`, `origin/main`, a tag). Untracked files are not included |
+| `A..B` | the two endpoints, working tree untouched |
+| `A...B` | `B` against the merge base of `A` and `B` |
+| `--staged` | the index only — what `git add` has picked up |
+
+A range or `--staged` deliberately excludes untracked files, because neither
+comparison involves the working tree. That is the point of them: reviewing
+`origin/main..HEAD` before pushing sends your commits and nothing else, with
+no stashing to isolate unrelated work in progress.
+
+Every endpoint is verified before anything reaches `git diff`, so a typo comes
+back naming the side that failed rather than as a diff error. `--staged`
+cannot be combined with a range — `--cached` compares the index to a single
+commit, so there is no second endpoint for it to use.
+
 ### Execution evidence
 
-The reviewer agent has no shell (ADR-002), so it cannot run your tests and will
-say so rather than guess. `signals` closes that gap from outside the boundary:
-the run happens in the bridge, and only the captured output travels in the
-payload. The agent gains no new capability.
-
-Either attach evidence you already have —
+The reviewer agent has no shell (ADR-002), so it cannot run your tests and says
+so rather than guess. `signals` lets whoever *did* run them hand the output
+over as data:
 
 ```
 /kiro-bridge:review --signals /tmp/signals.json
 ```
 
-where the file holds any of `failing_tests`, `lint`, `notes` — or let the
-bridge run the suite itself by setting an **argv array** (never a shell string;
-the bridge does not use a shell) in `~/.kiro-bridge/config.json`:
+The file holds any of `failing_tests`, `lint`, `notes`. `--no-signals` opts out
+for one call.
 
-```json
-{ "signals": { "testCommand": ["npm", "test"], "timeoutMs": 120000 } }
-```
+**The bridge runs nothing to produce this.** That is deliberate. The command a
+repository answers to — `npm test`, `make test` — is defined by that
+repository, so running it means executing the code under review. The decision
+to do that already belongs one layer up, in the permission prompt your agent
+host shows you; a second, quieter copy of it inside the bridge could only
+subtract safety.
 
-A non-zero exit is the signal, not a failure. `--no-signals` opts out for one
-call, and an explicit `--signals` beats a configured command. Signal text is
-redacted and capped on the same outbound path as the diff, and `testCommand`
-is user-config only — a repository's `.kiro/settings/kiro-bridge.json` can
-never hand the bridge something to execute. If collection fails the review
-still runs and the header reads `signals unavailable (...)`, so an absent
-signal is never mistaken for a passing one.
+Signal text is redacted and capped on the same outbound path as the diff, but
+treat that as best-effort rather than a guarantee: you choose the file's
+contents, and the redaction patterns match secrets in their ordinary shapes,
+not ones you have reformatted. Do not put anything in there you would not send.
 
 ## Security model
 

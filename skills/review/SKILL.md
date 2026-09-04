@@ -1,7 +1,7 @@
 ---
 name: review
 description: Have Kiro CLI review the current diff and return structured findings. Use this when Claude wants a second opinion after finishing a task, or when the user asks to "have kiro review this."
-argument-hint: "[ref] [--focus <text>] [--adversarial] [--bg] [--dry-run] [--signals <path>] [--no-signals] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]"
+argument-hint: "[ref|A..B] [--staged] [--focus <text>] [--adversarial] [--bg] [--dry-run] [--signals <path>] [--no-signals] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet]"
 ---
 
 # kiro-bridge:review
@@ -19,13 +19,14 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" review [ref] [flags]
 
 | Argument | Meaning |
 |---|---|
-| `ref` | Comparison base. Defaults to `HEAD` (staged + unstaged + untracked) |
+| `ref` | Comparison base — anything `git diff` accepts. A commit-ish (`HEAD~3`, `origin/main`) compares that point to the working tree; a range (`A..B`, or `A...B` for merge-base) compares two recorded points and leaves the working tree out. Defaults to `HEAD` (staged + unstaged + untracked) |
+| `--staged` | Review the index only — what `git add` has picked up. Excludes untracked files and cannot be combined with a range |
 | `--focus <text>` | Steer the review toward a concern (e.g. `--focus "auth and session handling"`). Must be non-empty. Appended to the review goal and redacted on the same path as the diff |
 | `--adversarial` | Adopt a skeptical stance that pressure-tests assumptions, trust boundaries, concurrency, rollback/data-loss, and alternative designs. Still strictly read-only and findings-only |
 | `--bg` | Run as a background job. A job id is returned immediately; retrieve it later with `/kiro-bridge:result`. Cannot be combined with `--dry-run` |
 | `--dry-run` | Print the payload without sending it. **Try this first on a repo you haven't used before**. The header states `mode: standard` or `mode: adversarial` |
-| `--signals <path>` | Attach execution evidence you already gathered: a JSON file with any of `failing_tests`, `lint`, `notes`. Beats a configured `signals.testCommand` for this call |
-| `--no-signals` | Attach no execution evidence, whatever is configured |
+| `--signals <path>` | Attach execution evidence you already gathered: a JSON file with any of `failing_tests`, `lint`, `notes`. The bridge reads the file and runs nothing |
+| `--no-signals` | Attach no execution evidence for this call |
 | `--model <id>` | Override the Kiro model for this review. Use an id from `bridge.mjs models` |
 | `--effort <lv>` | Override effort (`low`, `medium`, `high`, `xhigh`, or `max`) |
 | `--timeout <ms>` | Default 180000 |
@@ -54,39 +55,53 @@ The result header (and the `--dry-run` header) identifies the review mode as
   rollback/data-loss, and at least one alternative design. It never gains write
   or shell access — it only looks harder.
 
+## Choosing what gets reviewed
+
+The `ref` argument accepts anything `git diff` does, and the default is
+unchanged: `HEAD` against the working tree, untracked files included.
+
+| Form | What it compares |
+|---|---|
+| *(none)* | `HEAD` vs the working tree — staged, unstaged, and untracked |
+| `<commit-ish>` | that point vs *tracked* working-tree state (`HEAD~3`, `origin/main`, a tag). Untracked files are not included |
+| `A..B` | the two endpoints, working tree untouched |
+| `A...B` | `B` against the merge base of `A` and `B` |
+| `--staged` | the index only — what `git add` has picked up |
+
+A range or `--staged` deliberately excludes untracked files, because neither
+comparison involves the working tree. That is the point of them: reviewing
+`origin/main..HEAD` before pushing sends your commits and nothing else, with
+no stashing to isolate unrelated work in progress.
+
+Every endpoint is verified before anything reaches `git diff`, so a typo comes
+back naming the side that failed rather than as a diff error. `--staged`
+cannot be combined with a range — `--cached` compares the index to a single
+commit, so there is no second endpoint for it to use.
+
 ## Execution evidence (`signals`)
 
-The reviewer agent has **no shell** — it cannot run the tests, so on its own it
-can only reason statically and will say so. Signals close that gap without
-relaxing the trust boundary: the run happens outside the agent and only the
-captured output travels in the payload.
+The reviewer agent has no shell (ADR-002), so it cannot run your tests and says
+so rather than guess. `signals` lets whoever *did* run them hand the output
+over as data:
 
-Two sources, and `--no-signals` > `--signals` > configured command > nothing:
+```
+node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" review --signals /tmp/signals.json
+```
 
-1. **You already ran them.** Write what you have to a JSON file and pass it.
-   This is the normal path when Claude ran the suite itself.
+The file holds any of `failing_tests`, `lint`, `notes`. `--no-signals` opts out
+for one call.
 
-   ```bash
-   printf '{"failing_tests":"3 failed, 135 passed\n..."}' > /tmp/sig.json
-   node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" review --signals /tmp/sig.json
-   ```
+**The bridge runs nothing to produce this.** That is deliberate. The command a
+repository answers to — `npm test`, `make test` — is defined by that
+repository, so running it means executing the code under review. The decision
+to do that already belongs one layer up, in the permission prompt your agent
+host shows you; a second, quieter copy of it inside the bridge could only
+subtract safety.
 
-2. **The bridge runs them.** Set `signals.testCommand` in
-   `~/.kiro-bridge/config.json` as an **argv array** — never a shell string,
-   because the bridge does not use a shell:
-
-   ```json
-   { "signals": { "testCommand": ["npm", "test"], "timeoutMs": 120000 } }
-   ```
-
-   A non-zero exit is the point, not an error. This key is user-config only: a
-   repository's `.kiro/settings/kiro-bridge.json` can never supply it.
-
-Signal text is redacted and capped on the same outbound path as the diff. When
-collection fails the review still runs and the header says
-`signals unavailable (...)`, so "tests passed" never gets confused with "no
-test signal was gathered". The result header lists what travelled, e.g.
-`signals: failing_tests`.
+Signal text is redacted and capped on the same outbound path as the diff, but
+treat that as best-effort rather than a guarantee: you choose the file's
+contents, and the redaction patterns match secrets in their ordinary shapes,
+not ones you have reformatted. Do not put anything in there you would not send.
 
 ## Background review (`--bg`)
 

@@ -54,13 +54,10 @@ function dryRunFields(result) {
   }
 }
 
-// Which execution evidence travelled, and why it did not when collection
-// failed. Bridge-produced, so it stays outside the external/wrapped fence.
+// Which caller-supplied execution evidence travelled. Bridge-produced, so it
+// stays outside the external/wrapped fence.
 function signalFields(result) {
-  return {
-    signalKeys: result.signalKeys ?? [],
-    signalsNote: result.signalsNote ?? null,
-  }
+  return { signalKeys: result.signalKeys ?? [] }
 }
 
 export function reviewJson(result) {
