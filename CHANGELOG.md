@@ -19,6 +19,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every result because routine output deliberately surfaces only the generated
   record id, never the raw ACP session id.
 
+- **`/kiro-bridge:models` — the model ids this kiro-cli accepts for `--model`.**
+  `--model` used to be an unvalidated pass-through, so a caller that guessed
+  `sol` when the real id is `gpt-5.6-sol` only found out after a process had
+  been spawned — and with `--bg`, after a job had been created and its id
+  handed back. The list is not hardcoded, here or in the skill docs: it varies
+  by kiro-cli version *and* by account (experimental previews come and go), so
+  a baked-in list would be wrong within a release. kiro-cli already answers the
+  question via `chat --list-models --format json`, so the bridge asks it and
+  caches the answer under the kiro-cli version — the same key the ACP
+  capability cache uses — with a 24h TTL for same-version account changes.
+  Every command taking `--model` now validates against that list first and
+  suggests the nearest real id on a miss.
+
+  The check is deliberately **advisory, not authoritative**. An id this
+  kiro-cli does not know is rejected, but if discovery itself fails (offline,
+  kiro-cli error, unparseable output) the value passes through and kiro-cli
+  remains the judge — otherwise the bridge would block a model released after
+  the cache entry was written. For the same reason a miss against a *cached*
+  list triggers one forced re-list before anything is rejected: the cache can
+  be a full TTL behind, so "absent from the cache" is not evidence of "kiro-cli
+  does not know it".
+
 - **Project-level config — `.kiro/settings/kiro-bridge.json`.** Follows Kiro's
   own global/project settings convention (`~/.kiro/settings/` mirrored by
   `.kiro/settings/` in the repo) rather than inventing a bridge-specific

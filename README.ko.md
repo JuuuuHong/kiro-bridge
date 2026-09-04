@@ -70,6 +70,7 @@ fail-closed로 멈춘다: 프로세스 신원을 `/proc` 또는 `ps`로 읽고, 
 | `/kiro-bridge:result [job-id] [--follow-up] [--model <id>] [--effort <lv>]` | 2 | 백그라운드 잡 결과 회수, 세션 이어서 후속 질문 가능 |
 | `/kiro-bridge:resume <질문> [--session <id>] [--model <id>] [--effort <lv>]` | 3 | 기록된 재개 가능한 Kiro 세션을 후속 질문으로 이어감 |
 | `/kiro-bridge:transfer [--session <id>]` | 3 | 세션을 Kiro 자체에서 이어가는 `kiro-cli chat --resume-id` 명령을 출력 |
+| `/kiro-bridge:models [--force]` | 2 | 이 kiro-cli가 받는 `--model` 모델 id 목록 표시 |
 | `/kiro-bridge:status` | 2 | 이 저장소의 잡 목록과 누적 사용량 표시 |
 | `/kiro-bridge:cancel <job-id>` | 2 | 실행 중인 백그라운드 잡 취소 |
 

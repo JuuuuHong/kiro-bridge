@@ -20,6 +20,13 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" spec "<feature description>" [fl
 Default model is auto, but since spec quality depends on refinement, using
 `--model` for a higher-tier model and `--effort high` is recommended.
 
+**Model ids are not guessable.** `sol` is not a model id; `gpt-5.6-sol` is. Run
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" models` to see what this
+kiro-cli accepts, and map the user's shorthand onto a real id from that list.
+An id this kiro-cli does not recognise is caught before the delegated call.
+That check is advisory, not a guarantee: if model discovery itself is
+unavailable the id is passed through and kiro-cli remains the authority.
+
 `--json` emits a machine-readable envelope instead of the human summary, with
 failures sharing the shape via `ok: false`. Agent output stays marked
 `"external": true`; insert the fenced `wrapped` string, not `findings`.

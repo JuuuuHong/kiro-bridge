@@ -8,6 +8,10 @@ const DEFAULTS = {
   version: 1,
   // kiro-cli version -> capability detection result. Naturally invalidated when the version changes (ADR-001R).
   capabilities: {},
+  // kiro-cli version -> the model list that version reported. Same key, same
+  // reasoning; carries its own TTL because the account's model set can change
+  // without a kiro-cli upgrade. See scripts/lib/models.mjs.
+  models: {},
   redaction: {
     // Outbound protection (design §7). The user can extend this in config.json.
     excludeFiles: [
@@ -55,6 +59,7 @@ export function loadUserConfig() {
     ...onDisk,
     redaction: { ...DEFAULTS.redaction, ...(onDisk.redaction || {}) },
     capabilities: { ...(onDisk.capabilities || {}) },
+    models: { ...(onDisk.models || {}) },
     // Only accept string entries; anything else is ignored so a malformed
     // config can never inject non-name values into the env allowlist.
     envPassthrough: Array.isArray(onDisk.envPassthrough)
@@ -87,7 +92,7 @@ function stringList(value) {
 //   - removing or replacing any default exclude pattern (union only)
 //   - entropyThreshold / minSecretLength (raising them would weaken detection)
 //   - envPassthrough (must never widen the child-process env allowlist)
-//   - capabilities (the version cache is user-scoped state, not policy)
+//   - capabilities / models (version caches are user-scoped state, not policy)
 export function applyProjectConfig(config, project = {}) {
   const projectRedaction = project.redaction && typeof project.redaction === 'object'
     ? project.redaction
@@ -138,6 +143,19 @@ export function setCachedCapability(config, kiroVersion, capability) {
   return {
     ...config,
     capabilities: { ...config.capabilities, [kiroVersion]: capability },
+  }
+}
+
+export function getCachedModels(config, kiroVersion) {
+  if (!kiroVersion) return null
+  return config.models?.[kiroVersion] || null
+}
+
+export function setCachedModels(config, kiroVersion, entry) {
+  if (!kiroVersion) return config
+  return {
+    ...config,
+    models: { ...config.models, [kiroVersion]: entry },
   }
 }
 

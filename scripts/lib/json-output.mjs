@@ -144,6 +144,17 @@ export function setupJson(result) {
 }
 
 // Failures use the same envelope shape so a caller can branch on `ok` alone.
+// kiro-cli metadata, not agent-produced content: no trust fence applies here.
+// Ids are shape-validated and descriptions sanitized in models.mjs.
+export function modelsJson(listing) {
+  return base('models', {
+    version: listing.version,
+    cached: Boolean(listing.cached),
+    defaultModel: listing.defaultModel ?? null,
+    models: listing.models.map((entry) => ({ id: entry.id, description: entry.description })),
+  })
+}
+
 export function errorJson(command, err) {
   return {
     ok: false,
@@ -154,6 +165,9 @@ export function errorJson(command, err) {
       message: String(err?.message ?? err),
       reason: err?.details?.reason ?? null,
       partial: err?.details?.partial ?? null,
+      // Set by assertModelSupported. Without it a --json caller can only get
+      // the nearest real model id by regexing the message.
+      suggestions: err?.details?.suggestions ?? null,
     },
   }
 }

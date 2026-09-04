@@ -11,6 +11,7 @@ import {
 import { spec, formatSpec } from './lib/spec.mjs'
 import { resume, formatResume } from './lib/resume.mjs'
 import { transfer, formatTransfer } from './lib/transfer.mjs'
+import { listModels, formatModels, assertModelSupported } from './lib/models.mjs'
 import * as json from './lib/json-output.mjs'
 import { EVENT_TYPES } from './lib/transport/events.mjs'
 import { BridgeError } from './lib/errors.mjs'
@@ -71,10 +72,12 @@ const USAGE = `kiro-bridge
   bridge.mjs spec   <goal>   [--dry-run] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet] [--json]
   bridge.mjs result [job-id] [--follow-up <question>] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet] [--json]
   bridge.mjs resume <question> [--session <id>] [--model <id>] [--effort <lv>] [--timeout <ms>] [--quiet] [--json]
+  bridge.mjs models [--force] [--json]
   bridge.mjs transfer [--session <id>] [--json]
   bridge.mjs status [--json]
   bridge.mjs cancel <job-id> [--json]
 
+--model takes an id from 'bridge.mjs models', never a guess — an unrecognised id is caught before the delegated call (advisory: it passes through if discovery is unavailable).
 review results are data and are never auto-applied. task --write explicitly permits scoped file writes; review its git diff afterward.
 --json emits a machine-readable envelope; agent-produced fields stay marked external and fenced.
 `
@@ -103,6 +106,7 @@ const ALLOWED_FLAGS = {
   spec: new Set(['dryRun', 'model', 'effort', 'timeoutMs', 'quiet', 'json']),
   result: new Set(['followUp', 'model', 'effort', 'timeoutMs', 'quiet', 'json']),
   resume: new Set(['session', 'model', 'effort', 'timeoutMs', 'quiet', 'json']),
+  models: new Set(['force', 'json']),
   transfer: new Set(['session', 'json']),
   status: new Set(['json']),
   cancel: new Set(['json']),
@@ -234,6 +238,23 @@ async function main(argv) {
   if (isHelpRequest(flags._)) {
     outWrite(USAGE)
     return 0
+  }
+
+  if (command === 'models') {
+    const listing = await listModels({ force: flags.force })
+    emit(flags, formatModels(listing), () => json.modelsJson(listing))
+    return 0
+  }
+
+  // Catch a guessed --model here rather than letting kiro-cli reject it: the
+  // failure would otherwise surface only after a spawn (and, with --bg, only
+  // after a job was created and the caller had already been handed its id).
+  // Soft by design — see validateModel; an unverifiable id still goes through.
+  //
+  // Gated on the command being one that takes --model: an unrecognised command
+  // must report itself, not spend a discovery call to complain about a flag.
+  if (ALLOWED_FLAGS[command]?.has('model')) {
+    await assertModelSupported(flags.model)
   }
 
   if (command === 'setup') {

@@ -24,11 +24,18 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" review [ref] [flags]
 | `--adversarial` | Adopt a skeptical stance that pressure-tests assumptions, trust boundaries, concurrency, rollback/data-loss, and alternative designs. Still strictly read-only and findings-only |
 | `--bg` | Run as a background job. A job id is returned immediately; retrieve it later with `/kiro-bridge:result`. Cannot be combined with `--dry-run` |
 | `--dry-run` | Print the payload without sending it. **Try this first on a repo you haven't used before**. The header states `mode: standard` or `mode: adversarial` |
-| `--model <id>` | Override the Kiro model for this review |
+| `--model <id>` | Override the Kiro model for this review. Use an id from `bridge.mjs models` |
 | `--effort <lv>` | Override effort (`low`, `medium`, `high`, `xhigh`, or `max`) |
 | `--timeout <ms>` | Default 180000 |
 | `--quiet` | Suppress progress output (stderr) |
 | `--json` | Emit a machine-readable envelope instead of the human summary. Failures share the shape via `ok: false`. Agent output stays marked `"external": true`; insert the fenced `wrapped` string, not `findings` |
+
+**Model ids are not guessable.** `sol` is not a model id; `gpt-5.6-sol` is. Run
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" models` to see what this
+kiro-cli accepts, and map the user's shorthand onto a real id from that list.
+An id this kiro-cli does not recognise is caught before the delegated call.
+That check is advisory, not a guarantee: if model discovery itself is
+unavailable the id is passed through and kiro-cli remains the authority.
 
 Progress goes to stderr and successful results to stdout. Parse stdout on success;
 on a non-zero exit, inspect stderr for the bracketed error code described below.

@@ -21,9 +21,16 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" task "<goal>" [flags]
 | `--bg` | Run as a background job. A job id is returned immediately. Cannot be combined with `--dry-run` |
 | `--write` | Use the write-permitted worker agent (shell is still untrusted). **Only when the user explicitly requests it** |
 | `--dry-run` | Preview the payload without sending it |
-| `--model` / `--effort` | Override Kiro's model/effort level. Default is auto |
+| `--model` / `--effort` | Override Kiro's model/effort level. Default is auto. Model ids come from `bridge.mjs models` |
 | `--timeout <ms>` | Default 600000 |
 | `--json` | Emit a machine-readable envelope instead of the human summary. Failures share the shape via `ok: false`. Agent output stays marked `"external": true`; insert the fenced `wrapped` string, not `findings` |
+
+**Model ids are not guessable.** `sol` is not a model id; `gpt-5.6-sol` is. Run
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" models` to see what this
+kiro-cli accepts, and map the user's shorthand onto a real id from that list.
+An id this kiro-cli does not recognise is caught before the delegated call.
+That check is advisory, not a guarantee: if model discovery itself is
+unavailable the id is passed through and kiro-cli remains the authority.
 
 ## Permission rules (ADR-002)
 

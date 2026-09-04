@@ -73,6 +73,7 @@ tested there.
 | `/kiro-bridge:result [job-id] [--follow-up] [--model <id>] [--effort <lv>]` | 2 | Retrieve a background job's result, optionally continuing the session |
 | `/kiro-bridge:resume <question> [--session <id>] [--model <id>] [--effort <lv>]` | 3 | Continue any recorded resumable Kiro session with a follow-up question |
 | `/kiro-bridge:transfer [--session <id>]` | 3 | Print the `kiro-cli chat --resume-id` command to continue a session in Kiro itself |
+| `/kiro-bridge:models [--force]` | 2 | List the model ids this kiro-cli accepts for `--model` |
 | `/kiro-bridge:status` | 2 | List jobs for this repo and show accumulated usage |
 | `/kiro-bridge:cancel <job-id>` | 2 | Cancel a running background job |
 
