@@ -1,7 +1,7 @@
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { spawnSync } from 'node:child_process'
+import { spawnSync, execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -310,17 +310,43 @@ test('a refresh that fails leaves the id passed through, not rejected', async ()
 // The unit tests above all call validateModel directly, so deleting the
 // assertModelSupported call in bridge.mjs would leave them green. This drives
 // the real binary with a kiro-cli shim on PATH instead.
-function runBridge(args, env = {}) {
+function runBridge(args, env = {}, cwd = undefined) {
   const shimDir = mkdtempSync(join(tmpdir(), 'kiro-bridge-shim-'))
   const mock = join(import.meta.dirname, 'fixtures', 'mock-kiro-cli.mjs')
   writeFileSync(join(shimDir, 'kiro-cli'), `#!/bin/sh\nexec "${process.execPath}" "${mock}" "$@"\n`, { mode: 0o755 })
   try {
     return spawnSync(process.execPath, [join(import.meta.dirname, '..', 'scripts', 'bridge.mjs'), ...args], {
       encoding: 'utf8',
+      cwd,
       env: { ...process.env, PATH: `${shimDir}:${process.env.PATH}`, KIRO_BRIDGE_HOME: home, ...env },
     })
   } finally {
     rmSync(shimDir, { recursive: true, force: true })
+  }
+}
+
+// A throwaway repo with one uncommitted change.
+//
+// `review` collects its diff from the process cwd, so a test that runs it
+// without a cwd reviews *this* repo — and only reaches the dry-run payload
+// while this working tree happens to be dirty. On a clean checkout (CI, or
+// right after committing) the same test gets "No reviewable changes" instead,
+// and the assertion fails for a reason that has nothing to do with --model.
+function withReviewableRepo(fn) {
+  const dir = mkdtempSync(join(tmpdir(), 'kiro-bridge-repo-'))
+  const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+  try {
+    git('init', '-q')
+    writeFileSync(join(dir, 'app.mjs'), 'export const answer = 1\n')
+    git('add', 'app.mjs')
+    // Identity is passed per-invocation — a test must not depend on, or touch,
+    // the developer's git config.
+    git('-c', 'user.email=test@example.invalid', '-c', 'user.name=kiro-bridge test',
+      'commit', '-q', '-m', 'seed')
+    writeFileSync(join(dir, 'app.mjs'), 'export const answer = 2\n')
+    return fn(dir)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 }
 
@@ -333,9 +359,11 @@ test('the CLI rejects an unknown --model before running the command', () => {
 })
 
 test('the CLI lets a known --model through to the command', () => {
-  const res = runBridge(['review', '--model', 'claude-opus-5', '--dry-run'])
-  assert.equal(res.status, 0)
-  assert.match(res.stdout, /\[dry-run\]/)
+  withReviewableRepo((repo) => {
+    const res = runBridge(['review', '--model', 'claude-opus-5', '--dry-run'], {}, repo)
+    assert.equal(res.status, 0, res.stderr)
+    assert.match(res.stdout, /\[dry-run\]/)
+  })
 })
 
 test('the CLI reports an unknown --model through the --json envelope', () => {
@@ -391,7 +419,9 @@ test('a --json rejection carries the suggestions as data, not only in the messag
 // predates a model must not be the reason the CLI rejects it.
 test('the CLI accepts a model the warm cache has not heard of yet', () => {
   seedCache({ detectedAt: FRESH, defaultModel: 'auto', models: [{ id: 'auto', description: 'stale' }] })
-  const res = runBridge(['review', '--model', 'claude-opus-5', '--dry-run'])
-  assert.equal(res.status, 0, res.stderr)
-  assert.match(res.stdout, /\[dry-run\]/)
+  withReviewableRepo((repo) => {
+    const res = runBridge(['review', '--model', 'claude-opus-5', '--dry-run'], {}, repo)
+    assert.equal(res.status, 0, res.stderr)
+    assert.match(res.stdout, /\[dry-run\]/)
+  })
 })
