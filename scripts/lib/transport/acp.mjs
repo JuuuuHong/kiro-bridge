@@ -7,7 +7,7 @@ import { JsonRpcClient } from './jsonrpc.mjs'
 import { normalizeAcpUpdate, normalizeKiroMetadata, createCollector, EVENT_TYPES } from './events.mjs'
 import { loadConfig } from '../config.mjs'
 import { childEnvFromConfig } from '../env.mjs'
-import { bridgeError, classifyOutput, CODES } from '../errors.mjs'
+import { bridgeError, classifyOutput, classifyStopReason, CODES } from '../errors.mjs'
 
 export const PROTOCOL_VERSION = 1
 
@@ -31,32 +31,9 @@ export function validateInitialize(result) {
   return { ok: true, agentCapabilities }
 }
 
-// Maps a prompt stopReason to a terminal disposition.
-// { ok: true } means the turn finished cleanly. Otherwise { code } carries the
-// BridgeError code to throw, with partial output attached by the caller.
-export function classifyStopReason(stopReason) {
-  switch (stopReason) {
-    case 'end_turn':
-      return { ok: true }
-    case 'max_tokens':
-    case 'max_turn_requests':
-      return { ok: false, code: CODES.INCOMPLETE, stopReason }
-    case 'refusal':
-      return { ok: false, code: CODES.REFUSED, stopReason }
-    case 'cancelled':
-      return { ok: false, code: CODES.CANCELLED, stopReason }
-    default:
-      return {
-        ok: false,
-        code: CODES.PROTOCOL,
-        stopReason,
-        reason:
-          stopReason == null
-            ? 'session/prompt returned no stopReason'
-            : `unknown stopReason: ${JSON.stringify(stopReason)}`,
-      }
-  }
-}
+// Re-exported so `acp.classifyStopReason` keeps working; the implementation
+// lives in errors.mjs because the subprocess transport applies the same rule.
+export { classifyStopReason }
 
 function initializeParams() {
   return {
@@ -79,10 +56,17 @@ function terminateChild(child, graceMs = 500) {
 }
 
 // Runs only the handshake to check ACP availability. No prompt is sent, so no credits are spent.
+//
+// The budget is generous on purpose. A warm `kiro-cli acp` answers initialize
+// in well under a second, but the *first* launch after a CLI upgrade pays for
+// binary/agent-server startup and can take several seconds. A probe that times
+// out there gets cached as "ACP unavailable" and pushes every delegated call
+// onto the degraded subprocess fallback, so the cost of being impatient is far
+// higher than the cost of waiting.
 export async function probe({
   bin = 'kiro-cli',
   spawnFn = spawn,
-  timeoutMs = 5000,
+  timeoutMs = 15_000,
   terminationGraceMs = 500,
   config = loadConfig(),
 } = {}) {

@@ -61,6 +61,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The subprocess fallback transport was fully broken on kiro-cli 2.21.0.**
+  Three independent defects stacked on the path that runs whenever ACP is
+  unavailable, and any one of them was enough to make a delegated call useless:
+
+  - `buildArgs` left the engine to the CLI default. On 2.21.0
+    `chat --no-interactive` resolves to the v1 engine, which rejects
+    `--output-format stream-json` outright, exits nonzero, and surfaced to the
+    caller as `[SPAWN_FAILED]`. The engine is now pinned to `v2` explicitly.
+    `v3` is not an alternative: it refuses a v2-shaped custom agent
+    (`needs upgrading for this agent engine, using "default"`) and would run the
+    delegated call under the *default* full-permission agent, silently dropping
+    the read-only sandbox the reviewer/researcher agents exist to enforce.
+  - 2.21.0 wraps every stream-json line in a typed envelope
+    (`{"type":"sessionUpdate","data":{"sessionId":…,"update":{…}}}`) instead of
+    emitting the ACP update at the top level. `normalizeStreamJsonLine` matched
+    neither shape, classified all 63 lines of a real turn as `raw`, and returned
+    an **empty result with null metadata** — a review that silently found
+    nothing. The envelope is now unwrapped for `sessionUpdate`, `metadata`,
+    `runFinished`, and `runError`; the flat and `session/update` forms still
+    normalize as before. `runFinished.finalText` is deliberately *not* collected
+    as message text, since it repeats the already-streamed chunks.
+  - `runFinished.stopReason` was never read, so a turn truncated by `max_tokens`
+    or ended by a refusal returned exit 0 and looked like a finished answer —
+    the ACP path has always rejected those. `classifyStopReason` moved from
+    `transport/acp.mjs` to `errors.mjs` and both transports now apply it
+    (re-exported from `acp.mjs`, so `acp.classifyStopReason` still resolves).
+    It is enforced only when the stream actually carried a terminal event, so an
+    older shape that has none is not mistaken for a missing stopReason.
+
+- **`--model` was silently ignored on the subprocess fallback.** On 2.21.0 this
+  path answers `failed to set model '<id>': Method not found` on stderr and then
+  runs the turn on the default model with exit 0. The requested id was reported
+  back as though it had been honoured, so a review attributed to `gpt-5.6-sol`
+  could have been produced by an entirely different model. That misattribution
+  is worse than a failure, so the call now raises `PROTOCOL` naming the model
+  that could not be applied. The ACP transport is unaffected — it applies
+  `--model` correctly, verified against the real binary.
+
+- **A cold-start ACP probe cached the degraded transport.** The handshake budget
+  was 5s. A warm `kiro-cli acp` answers `initialize` in well under a second, but
+  the first launch after a CLI upgrade pays for agent-server startup and can
+  exceed that — and the resulting "ACP unavailable" verdict then pushed every
+  delegated call onto the subprocess fallback (broken, per above) for the
+  negative-cache TTL. Raised to 15s: being impatient here costs far more than
+  waiting.
+
 - **A findings block after a shadowing preamble was lost to the raw fallback.**
   `extractJsonObject` matched only the first ```` ```json ```` fence and, within
   it, only the first balanced object. When Kiro ignored the prompt and printed

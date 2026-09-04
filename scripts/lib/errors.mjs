@@ -69,8 +69,35 @@ export function classifyOutput(text) {
   return null
 }
 
-export const MESSAGES = {
-  [CODES.TIMEOUT]: 'Timed out. Returning partial output only (not retried).',
+// Maps a turn's stopReason to a terminal disposition. Shared by both transports
+// so a truncated or refused turn is classified identically on either path.
+// { ok: true } means the turn finished cleanly. Otherwise { code } carries the
+// BridgeError code to throw, with partial output attached by the caller.
+export function classifyStopReason(stopReason) {
+  switch (stopReason) {
+    case 'end_turn':
+      return { ok: true }
+    case 'max_tokens':
+    case 'max_turn_requests':
+      return { ok: false, code: CODES.INCOMPLETE, stopReason }
+    case 'refusal':
+      return { ok: false, code: CODES.REFUSED, stopReason }
+    case 'cancelled':
+      return { ok: false, code: CODES.CANCELLED, stopReason }
+    default:
+      return {
+        ok: false,
+        code: CODES.PROTOCOL,
+        stopReason,
+        reason:
+          stopReason == null
+            ? 'the turn reported no stopReason'
+            : `unknown stopReason: ${JSON.stringify(stopReason)}`,
+      }
+  }
+}
+
+export const MESSAGES = {  [CODES.TIMEOUT]: 'Timed out. Returning partial output only (not retried).',
   [CODES.UNAUTHENTICATED]: 'Kiro authentication required. Run `kiro-cli login`.',
   [CODES.THROTTLED]: 'Credits exhausted or throttled. Check usage with `/kiro-bridge:status`.',
   [CODES.TOOL_DENIED]:

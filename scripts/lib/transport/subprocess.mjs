@@ -7,10 +7,28 @@ import { spawn } from 'node:child_process'
 import { createLineSplitter, normalizeStreamJsonLine, createCollector } from './events.mjs'
 import { loadConfig } from '../config.mjs'
 import { childEnvFromConfig } from '../env.mjs'
-import { bridgeError, classifyOutput, CODES } from '../errors.mjs'
+import { bridgeError, classifyOutput, classifyStopReason, CODES } from '../errors.mjs'
+
+// The engine is pinned explicitly rather than left to the CLI default.
+// kiro-cli 2.21.0 resolves `chat --no-interactive` to the v1 engine, and v1
+// rejects `--output-format stream-json` outright ("not supported on the v1
+// engine"), which exits nonzero and surfaces as SPAWN_FAILED. v3 is not an
+// option either: it refuses a v2-shaped custom agent ("needs upgrading for
+// this agent engine, using \"default\"") and would silently run the delegated
+// call under the *default* full-permission agent, dropping the read-only
+// sandbox the reviewer/researcher agents exist to enforce (ADR-002). v2 is the
+// only engine that accepts both stream-json and our agent definitions.
+export const AGENT_ENGINE = 'v2'
+
+// kiro-cli reports an unapplied model as a warning on stderr and still exits 0.
+const MODEL_UNAPPLIED_PATTERN = /failed to set model/i
 
 export function buildArgs({ agent, model, effort } = {}) {
-  const args = ['chat', '--no-interactive', '--output-format', 'stream-json']
+  const args = [
+    'chat', '--no-interactive',
+    '--output-format', 'stream-json',
+    '--agent-engine', AGENT_ENGINE,
+  ]
   if (agent) args.push('--agent', agent)
   if (model) args.push('--model', model)
   if (effort) args.push('--effort', effort)
@@ -138,6 +156,19 @@ export async function run(payload, options = {}) {
   const classified = classifyOutput(stderr)
   if (classified) throw bridgeError(classified, { stderr, exitCode })
 
+  // A requested model that the CLI could not apply is a silent downgrade: on
+  // kiro-cli 2.21.0 this path answers "failed to set model '<id>': Method not
+  // found" on stderr, exits 0, and runs the turn on the *default* model while
+  // the caller is told its choice was honoured. Reporting a gpt-5.6-sol review
+  // that an entirely different model produced is worse than failing, so fail.
+  if (options.model && MODEL_UNAPPLIED_PATTERN.test(stderr)) {
+    throw bridgeError(CODES.PROTOCOL, {
+      reason: `kiro-cli did not apply --model ${options.model} on the subprocess fallback transport; the turn would have run on the default model`,
+      model: options.model,
+      stderr,
+    })
+  }
+
   if (collector.denied) {
     throw bridgeError(CODES.TOOL_DENIED, { denials: collector.denials })
   }
@@ -146,10 +177,25 @@ export async function run(payload, options = {}) {
     throw bridgeError(CODES.SPAWN_FAILED, { exitCode, stderr })
   }
 
+  // A non-success stop reason cannot be trusted as a finished result — the same
+  // rule the ACP path applies. Only enforced when the stream actually reported a
+  // terminal event, so an older stream shape that has none still succeeds.
+  if (collector.stopSeen) {
+    const stop = classifyStopReason(collector.stopReason)
+    if (!stop.ok) {
+      throw bridgeError(stop.code, {
+        stopReason: stop.stopReason,
+        partial: collector.text,
+        ...(stop.reason ? { reason: stop.reason } : {}),
+      })
+    }
+  }
+
   return {
     sessionId: null, // there is no session to reuse on the one-shot path
     transport: 'subprocess',
     result: collector.text,
+    stopReason: collector.stopSeen ? collector.stopReason : undefined,
     metadata: collector.metadata,
   }
 }

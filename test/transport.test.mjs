@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path'
 
 import * as acp from '../scripts/lib/transport/acp.mjs'
 import * as subprocess from '../scripts/lib/transport/subprocess.mjs'
-import { EVENT_TYPES, normalizeAcpUpdate, normalizeKiroMetadata, createCollector } from '../scripts/lib/transport/events.mjs'
+import { EVENT_TYPES, normalizeAcpUpdate, normalizeKiroMetadata, normalizeStreamJsonLine, createCollector } from '../scripts/lib/transport/events.mjs'
 import { CODES } from '../scripts/lib/errors.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -241,9 +241,129 @@ test('subprocess: argument assembly has no shell string', () => {
   const args = subprocess.buildArgs({ agent: 'kiro-bridge-reviewer', model: 'sonnet' })
   assert.deepEqual(args, [
     'chat', '--no-interactive', '--output-format', 'stream-json',
+    '--agent-engine', 'v2',
     '--agent', 'kiro-bridge-reviewer', '--model', 'sonnet',
   ])
   assert.ok(!args.some((a) => /[;|&$`]/.test(a)))
+})
+
+// stream-json is rejected by the v1 engine and the custom agent is rejected by
+// v3, so the engine must be pinned rather than inherited from the CLI default.
+test('subprocess: the agent engine is pinned to v2 even with no options', () => {
+  const args = subprocess.buildArgs()
+  const i = args.indexOf('--agent-engine')
+  assert.notEqual(i, -1)
+  assert.equal(args[i + 1], 'v2')
+})
+
+// Exit 0 plus an unapplied model means the turn silently ran on the default
+// model. Reporting that as the requested model would misattribute the answer.
+test('subprocess: a model the CLI could not apply fails instead of downgrading silently', async () => {
+  await assert.rejects(
+    subprocess.run(PAYLOAD, {
+      spawnFn: mockSpawn('model-unapplied'),
+      model: 'gpt-5.6-sol',
+      timeoutMs: 10_000,
+    }),
+    (err) => err.code === CODES.PROTOCOL && /did not apply --model gpt-5\.6-sol/.test(err.details.reason),
+  )
+})
+
+test('subprocess: the unapplied-model guard stays quiet when no model was requested', async () => {
+  const r = await subprocess.run(PAYLOAD, {
+    spawnFn: mockSpawn('model-unapplied'),
+    timeoutMs: 10_000,
+  })
+  assert.equal(r.transport, 'subprocess')
+  assert.match(r.result, /echo:please review/)
+})
+
+// --- subprocess: kiro-cli 2.21.0 typed envelope ({type, data}) ---
+
+test('normalizeStreamJsonLine: the envelope form yields real events, not raw', () => {
+  const msg = normalizeStreamJsonLine(JSON.stringify({
+    type: 'sessionUpdate',
+    data: { sessionId: 's1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'hello' } } },
+  }))
+  assert.equal(msg.type, EVENT_TYPES.MESSAGE)
+  assert.equal(msg.text, 'hello')
+
+  const meta = normalizeStreamJsonLine(JSON.stringify({
+    type: 'metadata',
+    data: { sessionId: 's1', contextUsagePercentage: 41.5 },
+  }))
+  assert.equal(meta.type, EVENT_TYPES.METADATA)
+  assert.equal(meta.contextUsagePercentage, 41.5)
+
+  const stop = normalizeStreamJsonLine(JSON.stringify({
+    type: 'runFinished',
+    data: { sessionId: 's1', status: 'success', stopReason: 'end_turn', finalText: 'hello' },
+  }))
+  assert.equal(stop.type, EVENT_TYPES.STOP)
+  assert.equal(stop.stopReason, 'end_turn')
+})
+
+// finalText repeats the streamed chunks; emitting it as a message would return
+// the whole answer twice.
+test('normalizeStreamJsonLine: runFinished.finalText is not collected as message text', () => {
+  const c = createCollector()
+  c.push(normalizeStreamJsonLine(JSON.stringify({
+    type: 'sessionUpdate',
+    data: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'once' } } },
+  })))
+  c.push(normalizeStreamJsonLine(JSON.stringify({
+    type: 'runFinished',
+    data: { status: 'success', stopReason: 'end_turn', finalText: 'once' },
+  })))
+  assert.equal(c.text, 'once')
+})
+
+test('normalizeStreamJsonLine: the flat and session/update forms still normalize', () => {
+  const flat = normalizeStreamJsonLine(JSON.stringify({
+    sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'flat' },
+  }))
+  assert.equal(flat.type, EVENT_TYPES.MESSAGE)
+  assert.equal(flat.text, 'flat')
+
+  const rpc = normalizeStreamJsonLine(JSON.stringify({
+    method: 'session/update',
+    params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'rpc' } } },
+  }))
+  assert.equal(rpc.type, EVENT_TYPES.MESSAGE)
+  assert.equal(rpc.text, 'rpc')
+})
+
+test('subprocess: an envelope-form stream produces result text and metadata', async () => {
+  const events = []
+  const r = await subprocess.run(PAYLOAD, {
+    spawnFn: mockSpawn('envelope'),
+    timeoutMs: 10_000,
+    onEvent: (e) => events.push(e),
+  })
+  assert.match(r.result, /echo:please review/)
+  assert.equal(r.stopReason, 'end_turn')
+  assert.equal(r.metadata?.contextUsagePercentage, 12.5)
+  const types = events.map((e) => e.type)
+  assert.ok(types.includes(EVENT_TYPES.THOUGHT), 'thought chunk')
+  assert.ok(types.includes(EVENT_TYPES.TOOL_CALL), 'tool call visibility')
+  assert.ok(types.includes(EVENT_TYPES.MESSAGE), 'message chunk')
+})
+
+// A truncated turn exits 0 on this path, so only the stopReason distinguishes it.
+test('subprocess: a truncated envelope turn raises INCOMPLETE with the partial text', async () => {
+  await assert.rejects(
+    subprocess.run(PAYLOAD, { spawnFn: mockSpawn('envelope-truncated'), timeoutMs: 10_000 }),
+    (err) => err.code === CODES.INCOMPLETE
+      && err.details.stopReason === 'max_tokens'
+      && /echo:please review/.test(err.details.partial),
+  )
+})
+
+// Older stream shapes carry no terminal event; their absence is not a defect.
+test('subprocess: a stream with no terminal event still succeeds', async () => {
+  const r = await subprocess.run(PAYLOAD, { spawnFn: mockSpawn('ok'), timeoutMs: 10_000 })
+  assert.match(r.result, /echo:please review/)
+  assert.equal(r.stopReason, undefined)
 })
 
 test('subprocess: there is no session to reuse on the one-shot path', async () => {

@@ -14,6 +14,7 @@ export const EVENT_TYPES = {
   USAGE: 'usage',           // structured usage_update (token/context/cost accounting)
   PLAN: 'plan',             // agent plan (full replacement of the entry list)
   RAW: 'raw',               // couldn't be normalized. passed through as-is, not dropped
+  STOP: 'stop',             // terminal disposition of the turn (stopReason)
 }
 
 function numOrNull(v) {
@@ -179,7 +180,9 @@ export function normalizeAcpUpdate(update) {
 }
 
 // Normalizes one line of subprocess's --output-format stream-json.
-// Handles both a line carrying an ACP session/update verbatim and a flat-form line.
+// Three shapes are handled: kiro-cli 2.21.0's typed envelope
+// ({"type":"sessionUpdate","data":{...}}), a line carrying an ACP
+// session/update verbatim, and the older flat form.
 export function normalizeStreamJsonLine(line) {
   if (line == null) return null
   let obj = line
@@ -198,6 +201,13 @@ export function normalizeStreamJsonLine(line) {
   }
 
   if (obj && typeof obj === 'object') {
+    // Envelope form. kiro-cli 2.21.0 wraps every line as {type, data} and moves
+    // the ACP update one level down, so a reader that does not unwrap sees no
+    // message chunks at all and collects an empty result.
+    if (typeof obj.type === 'string' && obj.data && typeof obj.data === 'object') {
+      const unwrapped = unwrapEnvelope(obj.type, obj.data)
+      if (unwrapped) return unwrapped
+    }
     if (obj.method === 'session/update' && obj.params?.update) {
       return normalizeAcpUpdate(obj.params.update)
     }
@@ -218,6 +228,29 @@ export function normalizeStreamJsonLine(line) {
   return { type: EVENT_TYPES.RAW, raw: obj }
 }
 
+// Maps one typed stream-json envelope to an event, or null when the type is not
+// one we translate (the caller then falls through to the legacy shapes).
+function unwrapEnvelope(type, data) {
+  switch (type) {
+    case 'sessionUpdate':
+      return data.update ? normalizeAcpUpdate(data.update) : null
+    case 'metadata': {
+      const pct = pctFromContainer(data._meta) ?? pctFromContainer(data)
+      return pct === null ? null : { type: EVENT_TYPES.METADATA, contextUsagePercentage: pct }
+    }
+    case 'runFinished':
+      // finalText repeats the already-streamed message chunks, so it is
+      // deliberately not emitted as MESSAGE — doing so would double the result.
+      return { type: EVENT_TYPES.STOP, stopReason: data.stopReason ?? null, status: data.status ?? null }
+    case 'runError': {
+      const text = String(data.message ?? '')
+      return detectDenial(text) ? { type: EVENT_TYPES.DENIED, text } : null
+    }
+    default:
+      return null
+  }
+}
+
 // Aggregates the event stream into the final text and denial status.
 export function createCollector() {
   const chunks = []
@@ -226,12 +259,20 @@ export function createCollector() {
   let contextUsagePercentage = null
   let usage = null
   let plan = null
+  let stopSeen = false
+  let stopReason = null
 
   return {
     push(event) {
       if (!event) return
       if (event.type === EVENT_TYPES.MESSAGE && event.text) chunks.push(event.text)
       if (event.type === EVENT_TYPES.DENIED) denials.push(event)
+      if (event.type === EVENT_TYPES.STOP) {
+        // Recorded separately from `stopReason` so "no terminal event at all"
+        // stays distinguishable from "terminal event with a null stopReason".
+        stopSeen = true
+        stopReason = event.stopReason ?? null
+      }
       if (event.type === EVENT_TYPES.METADATA) {
         // New bounded shape carries only contextUsagePercentage. The legacy
         // shape carried a raw `meta` object (kept for backward compatibility).
@@ -257,6 +298,14 @@ export function createCollector() {
     },
     get denials() {
       return denials.slice()
+    },
+    // True only when the stream carried a terminal event. Older/flat stream
+    // shapes never do, and their absence must not be read as a bad stopReason.
+    get stopSeen() {
+      return stopSeen
+    },
+    get stopReason() {
+      return stopReason
     },
     get usage() {
       return usage

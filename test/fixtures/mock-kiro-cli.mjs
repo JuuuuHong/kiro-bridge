@@ -15,6 +15,19 @@ if (process.argv.includes('--version')) {
   process.exit(0)
 }
 
+// `chat --list-models --format json` — model discovery (scripts/lib/models.mjs).
+if (process.argv.includes('--list-models')) {
+  process.stdout.write(`${JSON.stringify({
+    models: [
+      { model_id: 'auto', description: 'Models chosen by task' },
+      { model_id: 'claude-opus-5', description: 'Claude Opus 5' },
+      { model_id: 'gpt-5.6-sol', description: 'Experimental preview of GPT 5.6 Sol' },
+    ],
+    default_model: 'auto',
+  })}\n`)
+  process.exit(0)
+}
+
 // --- ACP mode -------------------------------------------------------------
 if (mode === 'acp') {
   if (scenario === 'acp-unavailable') {
@@ -189,6 +202,30 @@ else if (mode === 'chat') {
       process.stderr.write('boom\n')
       process.exit(3)
     }
+    if (scenario === 'model-unapplied') {
+      // Real 2.21.0 behaviour: the model request fails, the warning goes to
+      // stderr, and the turn still completes successfully on the default model.
+      process.stderr.write("[warn] failed to set model 'gpt-5.6-sol': Method not found\n")
+    }
+
+    // kiro-cli 2.21.0's typed envelope form, replayed verbatim: every line is
+    // {type, data} and the ACP update sits one level down.
+    if (scenario === 'envelope' || scenario === 'envelope-truncated') {
+      let goal = ''
+      try { goal = JSON.parse(input).goal || '' } catch {}
+      const sid = 'sess-envelope-1'
+      const text = `{"findings":[],"summary":"echo:${goal}"}`
+      const update = (u) => send({ type: 'sessionUpdate', data: { sessionId: sid, update: u } })
+      send({ type: 'runStarted', data: { payloadSchema: 'acp', acpProtocolVersion: 1, engine: 'v2' } })
+      send({ type: 'metadata', data: { sessionId: sid, contextUsagePercentage: 12.5 } })
+      update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'thinking' } })
+      update({ sessionUpdate: 'tool_call', toolCallId: 'tc1', title: 'read', status: 'pending' })
+      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } })
+      const stopReason = scenario === 'envelope-truncated' ? 'max_tokens' : 'end_turn'
+      // finalText repeats the streamed chunk, exactly as the real CLI does.
+      send({ type: 'runFinished', data: { sessionId: sid, status: 'success', stopReason, finalText: text } })
+      process.exit(0)
+    }
 
     send({ sessionUpdate: 'tool_call', toolCallId: 'tc1', title: 'read', status: 'pending' })
 
@@ -213,6 +250,7 @@ else if (mode === 'chat') {
     // Echo the goal back so we can confirm the input arrived intact
     let goal = ''
     try { goal = JSON.parse(input).goal || '' } catch {}
+
     send({
       sessionUpdate: 'agent_message_chunk',
       content: { type: 'text', text: `{"findings":[],"summary":"echo:${goal}"}` },
