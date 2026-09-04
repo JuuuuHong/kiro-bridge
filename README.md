@@ -178,7 +178,9 @@ and the ADRs under [`docs/decisions/`](docs/decisions/).
 
 ## Verified environment
 
-kiro-cli 2.20.2, macOS, 2026-09-01.
+macOS, on kiro-cli 2.20.2 (2026-09-01) and 2.21.0 (2026-09-04). 2.21.0 changed
+the subprocess fallback's engine default and stream-json envelope shape; both
+are handled, so either version works.
 
 ## License
 
