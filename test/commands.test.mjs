@@ -279,6 +279,16 @@ test('agents: an untouched, same-version install is unchanged', () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
+test('agents: a changed prompt is reinstalled even at the same version', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agents-'))
+  const older = { ...renderAgent(AGENT_DEFS.reviewer, 'short'), prompt: 'the old reviewer prompt' }
+  installAgent(older, { dir })
+  const current = renderAgent(AGENT_DEFS.reviewer, 'short')
+  assert.equal(installAgent(current, { dir }).action, 'updated')
+  assert.equal(installAgent(current, { dir }).action, 'unchanged')
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test('agents: the hash only looks at the body, excluding the stamp', () => {
   const a = renderAgent(AGENT_DEFS.reviewer, 'short')
   const b = { ...a, _kiroBridge: { version: '9.9.9', toolSet: 'short' } }

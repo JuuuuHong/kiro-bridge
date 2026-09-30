@@ -159,6 +159,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as progress. Updates are now dropped until this turn's prompt is sent. The
   mock replays on load, as the real agent does.
 
+- **`setup` never delivered an edited agent prompt.** An installed agent was
+  reported `unchanged` whenever its version stamp and tool convention matched,
+  whatever its body said, so a prompt changed without a version bump stayed on
+  disk in its old form. The body is now compared too.
+
 - **A failed background job could not be diagnosed.** The job kept only the
   error's category — "The request could not be carried out as given." — and
   dropped the reason and the agent's JSON-RPC message that said what went

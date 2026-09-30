@@ -224,7 +224,12 @@ export function installAgent(rendered, { dir = agentsDir(), force = false } = {}
     if (stamp.hash && stamp.hash !== agentHash(existing)) {
       return { target, action: 'skipped', reason: 'user-modified — not overwritten' }
     }
-    if (stamp.version === AGENT_VERSION && stamp.toolSet === rendered._kiroBridge.toolSet) {
+    // The content is compared as well as the version string: a prompt edited
+    // without a version bump — the reviewer schema gaining verdict and
+    // confidence — was reported 'unchanged' and never reached disk.
+    if (stamp.version === AGENT_VERSION
+      && stamp.toolSet === rendered._kiroBridge.toolSet
+      && agentHash(existing) === agentHash(rendered)) {
       return { target, action: 'unchanged' }
     }
   }
