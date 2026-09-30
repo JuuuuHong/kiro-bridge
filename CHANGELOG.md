@@ -131,6 +131,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A review started in a subdirectory sent an empty diff.** `git diff
+  --name-only` names files relative to the repository root, but the follow-up
+  `git diff -- <paths>` resolves those paths against cwd, so from `pkg/` it
+  matched nothing: credits spent on a payload listing changed files with no
+  diff. Untracked files above cwd were dropped, and the job and session
+  registries — keyed by a cwd hash — split one repository into one scope per
+  directory, so `status` and `resume` came back empty. Every command now moves
+  to `git rev-parse --show-toplevel` before running; a relative `--signals`
+  path is resolved where it was typed first. Jobs and sessions recorded from a
+  subdirectory before this change are no longer visible from any directory.
+
+  The move applies to every command, so Kiro's working directory is now the
+  repository root for `task`, `spec`, and `resume` as well: a `spec` started in
+  `packages/api` writes to the root's `.kiro/specs/`, and the project config
+  (`.kiro/settings/kiro-bridge.json`) and Kiro steering are read from the root,
+  not from the subdirectory. A relative path in a task goal is read against the
+  root.
 - **Signal truncation defeated itself.** `tailTruncate` kept the tail of a run
   but overshot `LIMITS.signal` by the length of its own notice, and
   `buildPayload`'s cap then truncated from the head — cutting off exactly the

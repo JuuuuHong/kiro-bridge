@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Entry point. Only routes commands; logic lives in lib/ (design §3).
 import { realpathSync } from 'node:fs'
+import { resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { repoRoot } from './lib/git.mjs'
 import { review, formatSummary } from './lib/review.mjs'
 import { setup, formatSetup } from './lib/setup.mjs'
 import {
@@ -220,6 +222,20 @@ function emit(flags, text, envelopeFn) {
   outWrite(flags.json ? json.render(envelopeFn()) : `${text}\n`)
 }
 
+// Every command runs from the repository's top level. Started in a
+// subdirectory, git names changed files relative to the root but resolves the
+// follow-up pathspecs against cwd — the diff came back empty — and the job and
+// session registries, keyed by a cwd hash, split one repository into as many
+// scopes as directories it was run from. A path the caller typed means what it
+// meant where they typed it, so it is made absolute before the move. Outside a
+// repository cwd is left alone.
+async function moveToRepoRoot(flags) {
+  const root = await repoRoot()
+  if (!root || root === process.cwd()) return
+  if (flags.signals) flags.signals = resolvePath(flags.signals)
+  process.chdir(root)
+}
+
 // Remembered so the top-level failure handler can answer in the same format
 // the caller asked for.
 let invocation = { command: null, json: false }
@@ -245,6 +261,8 @@ async function main(argv) {
     outWrite(USAGE)
     return 0
   }
+
+  await moveToRepoRoot(flags)
 
   if (command === 'models') {
     const listing = await listModels({ force: flags.force })

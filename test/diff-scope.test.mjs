@@ -200,3 +200,46 @@ test('review reports the untracked files that actually travelled', async () => {
   assert.equal(sent.includes('late.md'), false, 'this fixture deliberately puts it past the cap')
   assert.deepEqual(res.untracked, [], 'the result must not claim it travelled')
 })
+
+// --- running from a subdirectory ---
+
+// End to end through the real CLI and a real git: the defect lived in how git
+// resolves paths against cwd, which a stub git cannot reproduce.
+test('review from a subdirectory sends the whole diff and resolves --signals where it was typed', async () => {
+  const { execFileSync } = await import('node:child_process')
+  const { mkdtempSync, mkdirSync, writeFileSync, realpathSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'kb-subdir-')))
+  try {
+    const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'pipe' })
+    git('init', '-q')
+    mkdirSync(join(root, 'pkg', 'src'), { recursive: true })
+    writeFileSync(join(root, 'pkg', 'src', 'a.js'), 'one\n')
+    writeFileSync(join(root, 'top.js'), 'one\n')
+    git('add', '.')
+    git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init')
+    writeFileSync(join(root, 'pkg', 'src', 'a.js'), 'one\ntwo\n')
+    writeFileSync(join(root, 'top.js'), 'one\nthree\n')
+    writeFileSync(join(root, 'rootnew.txt'), 'new\n')
+    writeFileSync(join(root, 'pkg', 'signals.json'), JSON.stringify({ notes: 'ran it' }))
+
+    const bridge = fileURLToPath(new URL('../scripts/bridge.mjs', import.meta.url))
+    const out = execFileSync(process.execPath, [
+      bridge, 'review', '--dry-run', '--json', '--signals', 'signals.json',
+    ], {
+      cwd: join(root, 'pkg'),
+      env: { ...process.env, KIRO_BRIDGE_HOME: join(root, '.kb-home') },
+      stdio: 'pipe',
+    })
+    const envelope = JSON.parse(out.toString())
+    assert.match(envelope.payload.diff, /\+two/)
+    assert.match(envelope.payload.diff, /\+three/)
+    assert.ok(envelope.untracked.includes('rootnew.txt'))
+    assert.ok(envelope.signalKeys.includes('notes'))
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

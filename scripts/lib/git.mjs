@@ -92,6 +92,18 @@ export async function isGitRepo(options = {}) {
   }
 }
 
+// The work tree's top level, or null outside a repository. git reports paths
+// relative to the top level while resolving pathspecs against cwd, so a bridge
+// started in a subdirectory has to move here before either happens.
+export async function repoRoot(options = {}) {
+  try {
+    const out = (await run(['rev-parse', '--show-toplevel'], options)).trim()
+    return out || null
+  } catch {
+    return null
+  }
+}
+
 // Confirm the ref actually exists first, so a typo comes back as a clear
 // error rather than a diff failure.
 // Every endpoint is verified before the spec reaches `git diff`. The spec is
