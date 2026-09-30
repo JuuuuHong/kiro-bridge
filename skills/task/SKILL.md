@@ -25,6 +25,14 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" task "<goal>" [flags]
 | `--timeout <ms>` | Default 600000 |
 | `--json` | Emit a machine-readable envelope instead of the human summary. Failures share the shape via `ok: false`. Agent output stays marked `"external": true`; insert the fenced `wrapped` string, not `findings` |
 
+## Bash timeout — set it every time
+
+A foreground task blocks until Kiro answers, and the Bash tool stops a command
+after 120s unless told otherwise. This command's own budget defaults to 600s,
+which is also the most the Bash tool will wait — so there is no headroom.
+Run it in the foreground only with a Bash `timeout` of `600000` **and**
+`--timeout 540000`; anything that may take longer belongs in `--bg`.
+
 **Model ids are not guessable.** `sol` is not a model id; `gpt-5.6-sol` is. Run
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" models` to see what this
 kiro-cli accepts, and map the user's shorthand onto a real id from that list.

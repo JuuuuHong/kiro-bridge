@@ -21,7 +21,6 @@ import { recordUsage, readUsage, formatUsage, pruneUsage } from './usage.mjs'
 import {
   review as runReview,
   formatSummary as formatReviewSummary,
-  DEFAULT_TIMEOUT_MS as REVIEW_TIMEOUT_MS,
 } from './review.mjs'
 
 export const DEFAULT_TIMEOUT_MS = 600_000 // design §8 failure mode table (task 600s)
@@ -403,7 +402,10 @@ const WORKER_EXECUTORS = {
       staged: Boolean(staged),
       focus,
       adversarial: Boolean(adversarial),
-      timeoutMs: timeoutMs || REVIEW_TIMEOUT_MS,
+      // A background review answers to no shell tool's clock, and --bg is what
+      // a caller reaches for when a review looks long. It gets the background
+      // budget rather than the 180s foreground one it would otherwise inherit.
+      timeoutMs: timeoutMs || DEFAULT_TIMEOUT_MS,
       model,
       effort,
       signalsPath: signalsPath || null,

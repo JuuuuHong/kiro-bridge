@@ -8,6 +8,10 @@ Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" resume $ARGUMENTS`.
 - Shell-quote every argument value you pass (e.g. `"<question>"`).
   Arguments are free-form text; unquoted `;`, backticks, or `$(...)`
   would be interpreted by the shell rather than sent to Kiro.
+- The call blocks until Kiro answers, and its budget defaults to 600s — the
+  most the Bash tool will wait, and far past its 120s default. Pass the Bash
+  tool `timeout: 600000` with `--timeout 540000`, or run the Bash call in the
+  background (`run_in_background`) and read its output when it completes.
 - With no `--session`, this repo's most recent resumable session is used.
 - `--session <id>` accepts either a record id (from a resume hint) or the raw
   ACP session id; the most recent matching session wins. Prefer the generated

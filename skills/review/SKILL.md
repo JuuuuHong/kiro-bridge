@@ -29,9 +29,21 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" review [ref] [flags]
 | `--no-signals` | Attach no execution evidence for this call |
 | `--model <id>` | Override the Kiro model for this review. Use an id from `bridge.mjs models` |
 | `--effort <lv>` | Override effort (`low`, `medium`, `high`, `xhigh`, or `max`) |
-| `--timeout <ms>` | Default 180000 |
+| `--timeout <ms>` | Default 180000 in the foreground, 600000 with `--bg` |
 | `--quiet` | Suppress progress output (stderr) |
 | `--json` | Emit a machine-readable envelope instead of the human summary. Failures share the shape via `ok: false`. Agent output stays marked `"external": true`; insert the fenced `wrapped` string, not `findings` |
+
+## Bash timeout — set it every time
+
+A foreground review blocks until Kiro answers. The Bash tool stops a command
+after 120s unless told otherwise, which is shorter than this command's own
+180s budget: a long review is cut off by the shell, with the credits already
+spent and the result gone. Pass the Bash tool a `timeout` of the bridge's
+`--timeout` plus 60s — `240000` for the default; the margin covers version and
+model checks that run before the review's own clock starts. If the change is
+large enough that the review may run past about nine minutes, use `--bg`
+instead — the Bash tool cannot wait longer than 600000 — and raise `--timeout`
+if even the background budget of 600000 may not be enough.
 
 **Model ids are not guessable.** `sol` is not a model id; `gpt-5.6-sol` is. Run
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" models` to see what this

@@ -12,6 +12,10 @@ Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" result $ARGUMENTS`.
 - If it's still `running`, report that as-is and wait. Do not poll repeatedly.
 - `--follow-up` only works on jobs with a surviving ACP session. If it errors
   saying no session exists, guide the user toward a new `/kiro-bridge:task`.
+- A `--follow-up` call blocks until Kiro answers, and its budget defaults to 600s — the
+  most the Bash tool will wait, and far past its 120s default. Pass the Bash
+  tool `timeout: 600000` with `--timeout 540000`, or run the Bash call in the
+  background (`run_in_background`) and read its output when it completes.
 - `--model <id>` and `--effort <lv>` override Kiro for the follow-up call. Model
   ids are not guessable — take one from `bridge.mjs models` rather than inventing it.
   These flags, `--timeout`, and `--quiet` require `--follow-up`; plain result

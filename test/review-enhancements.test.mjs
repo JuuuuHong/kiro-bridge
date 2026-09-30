@@ -243,6 +243,7 @@ test('runWorker: review job collects the diff in the worker and stores the wrapp
   assert.equal(sentOptions.agent, `${AGENT_PREFIX}reviewer`, 'review runs under the reviewer agent')
   assert.equal(sentOptions.model, 'model-x')
   assert.equal(sentOptions.effort, 'high')
+  assert.equal(sentOptions.timeoutMs, 600_000, 'a background review gets the background budget, not the 180s foreground one')
   assert.match(sentPayload.goal, /Focus especially on: auth/)
   assert.ok(sentPayload.constraints.join('\n').toLowerCase().includes('adversarial'))
 

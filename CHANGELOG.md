@@ -148,6 +148,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`.kiro/settings/kiro-bridge.json`) and Kiro steering are read from the root,
   not from the subdirectory. A relative path in a task goal is read against the
   root.
+
+- **Foreground runs outlived the Bash tool that launched them.** Claude Code's
+  Bash tool stops a command after 120s by default, shorter than review's own
+  180s budget, and task/spec/resume default to 600s — the tool's ceiling, with
+  no headroom. A long run was cut off by the shell, credits spent and result
+  lost. The skills and commands now tell Claude to size the Bash timeout to the
+  bridge's, and to go background for anything longer. A `--bg` review also
+  inherited the 180s foreground budget, though `--bg` is what a long review
+  reaches for; it now gets the 600s background budget.
+
 - **Signal truncation defeated itself.** `tailTruncate` kept the tail of a run
   but overshot `LIMITS.signal` by the length of its own notice, and
   `buildPayload`'s cap then truncated from the head — cutting off exactly the

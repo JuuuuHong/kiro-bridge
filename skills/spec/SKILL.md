@@ -20,6 +20,15 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" spec "<feature description>" [fl
 Default model is auto, but since spec quality depends on refinement, using
 `--model` for a higher-tier model and `--effort high` is recommended.
 
+## Bash timeout — set it every time
+
+A spec run blocks until Kiro finishes writing, and the Bash tool stops a
+command after 120s unless told otherwise. This command's own budget defaults
+to 600s, which is also the most the Bash tool will wait. Either pass a Bash
+`timeout` of `600000` together with `--timeout 540000`, or run the Bash call
+itself in the background (`run_in_background`) and read its output when it
+completes — `spec` has no `--bg` of its own.
+
 **Model ids are not guessable.** `sol` is not a model id; `gpt-5.6-sol` is. Run
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs" models` to see what this
 kiro-cli accepts, and map the user's shorthand onto a real id from that list.
