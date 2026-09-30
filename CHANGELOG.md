@@ -44,6 +44,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   redacted and capped on the same outbound path as the diff, tail-first so the
   failures and summary at the end of a run survive truncation.
 
+### Changed
+
+- **Error codes distinguish a bad request from a bad exchange.** `PROTOCOL` —
+  "Protocol exchange with kiro-cli did not match expectations" — was raised for
+  a dozen conditions in which kiro-cli was never contacted: an unresolvable git
+  ref, an empty goal, a `--session` selector matching nothing, an unknown
+  `--model`, a git diff exceeding the read buffer. The message sent the reader
+  looking for a fault in a process that had not started. Those now raise
+  `INVALID_INPUT` ("The request could not be carried out as given"), leaving
+  `PROTOCOL` to what it names: a kiro-cli exchange that actually went wrong.
+  The new message deliberately does not claim kiro-cli was never run — model
+  validation and transport capability detection may spawn it before the
+  request is judged unusable — only that the fix is in the request. The
+  `--json` envelope reports the new code.
+
+  One case went elsewhere: a resume routed to the one-shot subprocess transport
+  now raises `TRANSPORT_UNAVAILABLE`, not `INVALID_INPUT`. Session reuse is a
+  legitimate request; what is missing is a kiro-cli that speaks ACP, and no
+  rewording of the request would help. That code's message is widened to cover
+  a working binary that cannot serve the transport, alongside one that is not
+  there at all.
 ### Security
 
 - **A repository's exclude patterns could hang the reviewer's machine.**

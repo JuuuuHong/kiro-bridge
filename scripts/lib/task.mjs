@@ -169,7 +169,7 @@ export async function task(options = {}) {
     ...rest
   } = options
   if (!goal || !goal.trim()) {
-    throw bridgeError(CODES.PROTOCOL, { reason: 'task goal is empty' })
+    throw bridgeError(CODES.INVALID_INPUT, { reason: 'task goal is empty' })
   }
 
   const agentDef = pickAgent({ write })
@@ -441,7 +441,7 @@ export async function result(options = {}) {
 
   // follow-up assumes ACP session reuse (design §8). The one-shot path has no session.
   if (!job.meta.sessionId) {
-    throw bridgeError(CODES.PROTOCOL, {
+    throw bridgeError(CODES.INVALID_INPUT, {
       reason: `job ${jobId} has no session to reuse (transport: ${job.meta.transport || 'unknown'})`,
     })
   }

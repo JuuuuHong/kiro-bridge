@@ -18,7 +18,7 @@ function run(args, { cwd, execFileFn = execFile } = {}) {
         // surface as an unclassified stack trace. Name it instead: the fix is
         // to review a narrower ref, not to retry.
         if (err.code === 'ENOBUFS') {
-          return reject(bridgeError(CODES.PROTOCOL, {
+          return reject(bridgeError(CODES.INVALID_INPUT, {
             reason: `git output exceeded ${MAX_BUFFER / (1024 * 1024)}MB — review a narrower ref or a subset of the change`,
           }))
         }
@@ -105,7 +105,7 @@ export async function resolveRef(ref, options = {}) {
     try {
       await run(['rev-parse', '--verify', '--quiet', `${endpoint}^{commit}`], options)
     } catch {
-      throw bridgeError(CODES.PROTOCOL, {
+      throw bridgeError(CODES.INVALID_INPUT, {
         reason: parsed.kind === 'range'
           ? `unknown git ref in range ${ref}: ${endpoint}`
           : `unknown git ref: ${ref}`,
@@ -180,7 +180,7 @@ export async function collectDiff(options = {}) {
   const { ref = null, excludeFiles = [], staged = false } = options
 
   if (!(await isGitRepo(options))) {
-    throw bridgeError(CODES.PROTOCOL, { reason: 'not a git repository' })
+    throw bridgeError(CODES.INVALID_INPUT, { reason: 'not a git repository' })
   }
   const spec = await resolveRef(ref, options)
 
@@ -188,7 +188,7 @@ export async function collectDiff(options = {}) {
   // commit, so a range leaves nothing for the index to be. Reject it rather
   // than let git emit a less obvious error.
   if (staged && spec?.kind === 'range') {
-    throw bridgeError(CODES.PROTOCOL, {
+    throw bridgeError(CODES.INVALID_INPUT, {
       reason: `--staged compares the index to a single commit, so it cannot take the range ${ref}`,
     })
   }
