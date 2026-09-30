@@ -65,6 +65,10 @@ if (mode === 'acp') {
 
     if (msg.method === 'session/load') {
       sessionId = msg.params.sessionId
+      // Real kiro-cli replays the earlier conversation before answering load.
+      update(sessionId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'OLD PROMPT' } })
+      update(sessionId, { sessionUpdate: 'tool_call', toolCallId: 'old-1', title: 'old tool', status: 'completed' })
+      update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'OLD ANSWER' } })
       return send({ jsonrpc: '2.0', id: msg.id, result: {} })
     }
 

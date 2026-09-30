@@ -145,6 +145,13 @@ export async function run(payload, options = {}) {
   }
 
   const collector = createCollector()
+  // session/load replays the whole earlier conversation as session/update
+  // notifications (measured on kiro-cli 2.26.0, as the ACP spec requires).
+  // Collected, the previous answer would be prepended to this turn's — and
+  // parseResponse takes the first findings block, so a resumed review could
+  // return the old findings as new. Nothing before this turn's prompt is part
+  // of its result, so updates are dropped until the prompt is sent.
+  let replaying = false
   let stderr = ''
   let timedOut = false
   let forceKillTimer = null
@@ -166,7 +173,7 @@ export async function run(payload, options = {}) {
       if (child.stdin.writable) child.stdin.write(s)
     },
     onNotification: (msg) => {
-      if (msg.method !== 'session/update') return
+      if (msg.method !== 'session/update' || replaying) return
       const params = msg.params || {}
       // Always preserve the normal, spec-shaped update event.
       emit(normalizeAcpUpdate(params.update))
@@ -242,6 +249,7 @@ export async function run(payload, options = {}) {
           sessionId,
         })
       }
+      replaying = true
       await client.request('session/load', { sessionId, cwd })
     } else {
       const created = await client.request('session/new', { cwd, mcpServers: [] })
@@ -250,6 +258,7 @@ export async function run(payload, options = {}) {
     }
 
     // The payload is always passed as the prompt body (ADR-003 decision 4).
+    replaying = false
     const promptResult = await client.request('session/prompt', {
       sessionId,
       prompt: [{ type: 'text', text: JSON.stringify(payload) }],

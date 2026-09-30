@@ -149,6 +149,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not from the subdirectory. A relative path in a task goal is read against the
   root.
 
+- **A resumed turn carried the previous conversation in its result.**
+  `session/load` replays the earlier conversation as `session/update`
+  notifications before it answers — measured against kiro-cli 2.26.0 with a
+  load and no prompt, and required by the ACP spec. The collector was already
+  listening, so the previous answer was prepended to the new one, and because
+  `parseResponse` takes the first findings block, a resumed review could
+  return the old findings as its own; replayed tool calls were also reported
+  as progress. Updates are now dropped until this turn's prompt is sent. The
+  mock replays on load, as the real agent does.
+
 - **Foreground runs outlived the Bash tool that launched them.** Claude Code's
   Bash tool stops a command after 120s by default, shorter than review's own
   180s budget, and task/spec/resume default to 600s — the tool's ceiling, with

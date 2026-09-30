@@ -329,8 +329,13 @@ Open Questions — 2026-09-01 measurement results (kiro-cli 2.20.1):
    kiro-bridge-reviewer` works. `--model`/`--effort` confirmed only from
    help text, real-call use not yet measured.
 
-Remaining measurements: OQ3 (spec format), the `session/load` real round trip
-for follow-up, the subprocess fallback path (`--output-format stream-json`) —
+`session/load` was measured on kiro-cli 2.26.0 (load only, no prompt, no
+credits): it advertises `loadSession: true`, replays the earlier conversation
+as `user_message_chunk` / `agent_thought_chunk` / `agent_message_chunk`
+updates before answering, and returns `{ modes, models }`. The transport drops
+those replayed updates.
+
+Remaining measurements: OQ3 (spec format), the subprocess fallback path (`--output-format stream-json`) —
 since ACP always wins, verifying the fallback requires explicitly forcing
 `transport: 'subprocess'`.
 

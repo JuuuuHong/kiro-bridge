@@ -63,6 +63,19 @@ test('acp: an existing sessionId is reused via session/load', async () => {
   assert.equal(r.sessionId, 'sess-existing')
 })
 
+test('acp: the conversation session/load replays is not part of the new turn', async () => {
+  const events = []
+  const r = await acp.run(PAYLOAD, {
+    spawnFn: mockSpawn('ok'),
+    sessionId: 'sess-existing',
+    timeoutMs: 10_000,
+    onEvent: (e) => events.push(e),
+  })
+  assert.ok(!r.result.includes('OLD ANSWER'), 'the replayed answer must not lead the new result')
+  assert.ok(r.result.length > 0, 'the new turn is still collected')
+  assert.ok(!events.some((e) => e.title === 'old tool'), 'replayed tool calls are not reported as progress')
+})
+
 // --- ACP conformance: protocol version + capabilities + stopReason ---
 
 test('acp.run: protocol version mismatch throws PROTOCOL with a reason', async () => {
