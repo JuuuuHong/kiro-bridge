@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2.26.0: the handshake and a `session/load` both succeed with the flag. A
   session created under v3 (`chat.agentEngine` set to v3) may no longer load;
   those ran under the full-permission default agent anyway.
+
+- **Partial output on a failed turn is fenced.** A timeout or refusal printed
+  what Kiro had written so far bare to stderr, and the `--json` error envelope
+  carried it raw under `external: false` — agent output outside the trust
+  boundary every other response gets (ADR-004). Both now wrap it like a
+  response, with the web notice, and the envelope is marked external.
 ## [0.3.0] - 2026-09-30
 
 ### Added

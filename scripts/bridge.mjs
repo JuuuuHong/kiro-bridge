@@ -17,6 +17,7 @@ import { listModels, formatModels, assertModelSupported } from './lib/models.mjs
 import * as json from './lib/json-output.mjs'
 import { EVENT_TYPES } from './lib/transport/events.mjs'
 import { BridgeError } from './lib/errors.mjs'
+import { wrapPartial } from './lib/findings.mjs'
 import { sanitizeTerminal } from './lib/sanitize.mjs'
 
 // All bridge output crosses a terminal boundary. Result/status/error strings
@@ -436,7 +437,7 @@ if (isDirectInvocation()) {
           errWrite(`  ${err.details.reason}\n`)
         }
         if (err.details?.partial) {
-          errWrite(`\nPartial output:\n${err.details.partial}\n`)
+          errWrite(`\nPartial output:\n${wrapPartial(err.details.partial)}\n`)
         }
         return exitAfterFlush(1)
       }

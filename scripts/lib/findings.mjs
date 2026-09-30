@@ -179,4 +179,14 @@ export function wrapForClaude(result, options = {}) {
   ].join('\n')
 }
 
+// Partial output from a turn that failed — a timeout or refusal — for the
+// error paths. It is agent output like any other, so it gets the same fence;
+// it was printed bare, outside the trust boundary ADR-004 draws around every
+// response. Always raw, since an unfinished findings block is not a result, and
+// always with the web notice, because by the time an error reaches the top
+// level nothing records which agent produced it.
+export function wrapPartial(partial) {
+  return wrapForClaude({ ok: false, raw: clean(partial, CAPS.raw) }, { webDerived: true })
+}
+
 export const TRUST_FENCE = { open: FENCE_OPEN, close: FENCE_CLOSE }
