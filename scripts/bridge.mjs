@@ -3,7 +3,7 @@
 import { realpathSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { repoRoot } from './lib/git.mjs'
+import { repoRoot, resolveScope } from './lib/git.mjs'
 import { review, formatSummary } from './lib/review.mjs'
 import { setup, formatSetup } from './lib/setup.mjs'
 import {
@@ -289,6 +289,7 @@ async function main(argv) {
 
   if (command === 'review') {
     if (flags.background) {
+      await resolveScope({ ref: flags._[0] || null, staged: flags.staged })
       const bg = reviewBackground({
         ref: flags._[0] || null,
         staged: flags.staged,

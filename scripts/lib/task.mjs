@@ -10,6 +10,7 @@ import { join, dirname } from 'node:path'
 
 import { buildPayload } from './context.mjs'
 import { readSignalsFile } from './signals.mjs'
+import { sanitizeTerminal } from './sanitize.mjs'
 import { parseResponse, wrapForClaude } from './findings.mjs'
 import { loadConfig } from './config.mjs'
 import * as transport from './transport/index.mjs'
@@ -349,7 +350,7 @@ export async function runWorker(jobId, { cwd = process.cwd(), runFn, collectDiff
     }
     return { ...result, sessionRecordId }
   } catch (err) {
-    const message = err instanceof BridgeError ? `[${err.code}] ${err.message}` : String(err?.stack || err)
+    const message = describeFailure(err)
     // A turn that died to a throttle, timeout, or tool denial still consumed
     // credits, and the ACP session it opened is still resumable on Kiro's side —
     // the transport puts its sessionId on the error. Persisting it before
@@ -360,11 +361,42 @@ export async function runWorker(jobId, { cwd = process.cwd(), runFn, collectDiff
     if (failedSessionId) {
       try { jobs.updateMeta(jobId, { sessionId: failedSessionId }, cwd) } catch {}
     }
+    // A timed-out or refused turn has already been paid for, and what Kiro wrote
+    // before it stopped is the only return on that. Kept as the job's body,
+    // wrapped as external data like any other result (ADR-004), so `result`
+    // shows it beside the error instead of nothing. Always as raw text, even if
+    // it parses: a findings block from an unfinished turn — verdict and all —
+    // must not be labelled like a finished review.
+    const partial = err?.details?.partial
+    if (partial) {
+      const agentDef = job.meta.command === 'review'
+        ? AGENT_DEFS.reviewer
+        : pickAgent({ write: Boolean(job.meta.payloadOptions?.write) })
+      try {
+        jobs.writeResult(jobId, wrapForClaude({ ok: false, raw: parseResponse(partial).raw }, {
+          agent: agentDef.name, webDerived: Boolean(agentDef.webDerived),
+        }), cwd)
+      } catch {}
+    }
     // A startup lock timeout may still have a live holder. Keep this best-effort
     // and bounded; reapOrphans remains the final self-healing fallback.
     try { jobs.failJob(jobId, message, cwd, { timeoutMs: 250 }) } catch {}
     throw err
   }
+}
+
+// The job's one-line error. A BridgeError's message names only its category —
+// "The request could not be carried out as given." — so the specifics that say
+// what actually went wrong (the reason, the agent's JSON-RPC error) are
+// appended, or a failed background job cannot be diagnosed at all. The RPC
+// message is written by kiro-cli and printed outside any trust fence, so each
+// part is flattened to one control-free line and capped.
+function describeFailure(err) {
+  if (!(err instanceof BridgeError)) return String(err?.stack || err)
+  const specifics = [err.details?.reason, err.details?.rpc?.message]
+    .filter((part) => typeof part === 'string' && part.trim() !== '')
+    .map((part) => sanitizeTerminal(part).replace(/\s+/g, ' ').trim().slice(0, 300))
+  return [`[${err.code}] ${err.message}`, ...specifics].join(' — ')
 }
 
 // Per-command background executors. Each returns the same shape a foreground

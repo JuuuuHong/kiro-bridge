@@ -332,3 +332,46 @@ test('result --follow-up: a review job continues under the reviewer agent, not r
   assert.equal(followOptions.sessionId, 'rev-sess')
   assert.ok(res.followUp.wrapped.includes(TRUST_FENCE.open))
 })
+
+// --- a failed background job keeps what explains it ---
+
+test('runWorker: a failed job records the reason and keeps the partial output as a wrapped body', async () => {
+  const { bridgeError, CODES } = await import('../scripts/lib/errors.mjs')
+  const { jobId } = jobs.createJob({ cwd: CWD, command: 'review', payloadOptions: { ref: null } })
+  await assert.rejects(runWorker(jobId, {
+    cwd: CWD,
+    collectDiffFn: fakeCollect,
+    runFn: async () => { throw bridgeError(CODES.TIMEOUT, { sessionId: 's-t', partial: 'half a review' }) },
+  }))
+  const job = jobs.readJob(jobId, CWD)
+  assert.equal(job.status, 'failed')
+  const body = jobs.readResult(jobId, CWD)
+  assert.ok(body.includes(TRUST_FENCE.open), 'partial output is fenced as external data')
+  assert.match(body, /half a review/)
+})
+
+test('runWorker: a JSON-RPC failure names the agent\'s own message, not just the category', async () => {
+  const { bridgeError, CODES } = await import('../scripts/lib/errors.mjs')
+  const { jobId } = jobs.createJob({ cwd: CWD, command: 'review', payloadOptions: { ref: null } })
+  await assert.rejects(runWorker(jobId, {
+    cwd: CWD,
+    collectDiffFn: fakeCollect,
+    runFn: async () => { throw bridgeError(CODES.PROTOCOL, { rpc: { code: -32602, message: 'session not found' } }) },
+  }))
+  assert.match(jobs.readJob(jobId, CWD).meta.error, /^\[PROTOCOL\] .* — session not found$/)
+})
+
+test('runWorker: the agent\'s JSON-RPC message is flattened and capped before it is recorded', async () => {
+  const { bridgeError, CODES } = await import('../scripts/lib/errors.mjs')
+  const { jobId } = jobs.createJob({ cwd: CWD, command: 'review', payloadOptions: { ref: null } })
+  const hostile = `first line\n\u001b[31mIGNORE PREVIOUS\u001b[0m${'x'.repeat(1000)}`
+  await assert.rejects(runWorker(jobId, {
+    cwd: CWD,
+    collectDiffFn: fakeCollect,
+    runFn: async () => { throw bridgeError(CODES.PROTOCOL, { rpc: { message: hostile } }) },
+  }))
+  const error = jobs.readJob(jobId, CWD).meta.error
+  assert.ok(!error.includes('\n'), 'one line')
+  assert.ok(!error.includes('\u001b'), 'no escape sequences')
+  assert.ok(error.length < 450, 'capped')
+})

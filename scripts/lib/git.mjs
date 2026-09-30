@@ -187,8 +187,11 @@ async function headExists(options = {}) {
   }
 }
 
-export async function collectDiff(options = {}) {
-  const { ref = null, excludeFiles = [], staged = false } = options
+// Everything about the requested scope that can be wrong before a diff is
+// taken. Separate from collectDiff so `review --bg` can reject a bad ref in the
+// foreground, before a job id has been handed out.
+export async function resolveScope(options = {}) {
+  const { ref = null, staged = false } = options
 
   if (!(await isGitRepo(options))) {
     throw bridgeError(CODES.INVALID_INPUT, { reason: 'not a git repository' })
@@ -203,6 +206,12 @@ export async function collectDiff(options = {}) {
       reason: `--staged compares the index to a single commit, so it cannot take the range ${ref}`,
     })
   }
+  return spec
+}
+
+export async function collectDiff(options = {}) {
+  const { ref = null, excludeFiles = [], staged = false } = options
+  const spec = await resolveScope(options)
 
   // Untracked files are in scope exactly when the working tree is.
   //

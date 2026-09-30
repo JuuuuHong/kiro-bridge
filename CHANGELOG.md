@@ -159,6 +159,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as progress. Updates are now dropped until this turn's prompt is sent. The
   mock replays on load, as the real agent does.
 
+- **A failed background job could not be diagnosed.** The job kept only the
+  error's category — "The request could not be carried out as given." — and
+  dropped the reason and the agent's JSON-RPC message that said what went
+  wrong. Both are now appended to the recorded error. A turn that timed out or
+  was refused had its partial output thrown away although it had been paid
+  for; it is kept as the job's body, wrapped as external data, so `result`
+  shows it. `review <ref> --bg` also checks the ref and `--staged` scope in the
+  foreground, so a typo fails immediately instead of after a job id is issued.
+
 - **Foreground runs outlived the Bash tool that launched them.** Claude Code's
   Bash tool stops a command after 120s by default, shorter than review's own
   180s budget, and task/spec/resume default to 600s — the tool's ceiling, with

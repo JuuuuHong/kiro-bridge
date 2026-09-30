@@ -243,3 +243,30 @@ test('review from a subdirectory sends the whole diff and resolves --signals whe
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('review --bg rejects an unknown ref before handing out a job id', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const { mkdtempSync, writeFileSync, realpathSync, rmSync, existsSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'kb-bgref-')))
+  try {
+    spawnSync('git', ['init', '-q'], { cwd: root })
+    writeFileSync(join(root, 'a.js'), 'one\n')
+    spawnSync('git', ['add', '.'], { cwd: root })
+    spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'], { cwd: root })
+
+    const home = join(root, '.kb-home')
+    const bridge = fileURLToPath(new URL('../scripts/bridge.mjs', import.meta.url))
+    const r = spawnSync(process.execPath, [bridge, 'review', 'no-such-ref', '--bg'], {
+      cwd: root, env: { ...process.env, KIRO_BRIDGE_HOME: home },
+    })
+    assert.equal(r.status, 1)
+    assert.match(r.stderr.toString(), /unknown git ref: no-such-ref/)
+    assert.equal(existsSync(join(home, 'jobs')), false, 'no job was created')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
