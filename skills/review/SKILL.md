@@ -63,13 +63,14 @@ unchanged: `HEAD` against the working tree, untracked files included.
 | Form | What it compares |
 |---|---|
 | *(none)* | `HEAD` vs the working tree — staged, unstaged, and untracked |
-| `<commit-ish>` | that point vs *tracked* working-tree state (`HEAD~3`, `origin/main`, a tag). Untracked files are not included |
+| `<commit-ish>` | that point vs the working tree (`HEAD~3`, `origin/main`, a tag), untracked files included |
 | `A..B` | the two endpoints, working tree untouched |
 | `A...B` | `B` against the merge base of `A` and `B` |
 | `--staged` | the index only — what `git add` has picked up |
 
-A range or `--staged` deliberately excludes untracked files, because neither
-comparison involves the working tree. That is the point of them: reviewing
+Untracked files travel wherever the working tree is part of the comparison,
+and only there: a range or `--staged` excludes them, because neither looks at
+the working tree at all. That is the point of them: reviewing
 `origin/main..HEAD` before pushing sends your commits and nothing else, with
 no stashing to isolate unrelated work in progress.
 
@@ -170,5 +171,8 @@ New files don't show up in `git diff`. So their paths are collected
 separately into `files[]` and Kiro reads them directly via `read` (contents
 are not embedded into the payload — this avoids displacing context).
 
-If `ref` is explicitly given, it's a comparison against that point, so
-working-tree untracked files are not mixed in.
+Untracked files ride along whenever the working tree is in scope — the default
+and a commit-ish. A range or `--staged` leaves them out, because neither
+comparison looks at the working tree. They are listed ahead of tracked files so
+the payload's file cap never drops them first: a tracked file's change still
+travels in the diff, while an untracked file's entry is its only trace.

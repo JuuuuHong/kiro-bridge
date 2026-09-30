@@ -65,6 +65,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rewording of the request would help. That code's message is widened to cover
   a working binary that cannot serve the transport, alongside one that is not
   there at all.
+
+- **A commit-ish now keeps untracked files.** `git diff <commit-ish>` already
+  compares that point against the working tree, so a file that has not been
+  `git add`ed is part of what changed since then — but it was dropped, and a
+  change consisting mostly of new files came back nearly empty. Untracked files
+  now travel wherever the working tree is in scope and only there: ranges and
+  `--staged` still exclude them, because neither comparison looks at the working
+  tree. The old rationale ("if ref was given, working-tree state is not mixed
+  in") was simply wrong about what `git diff <ref>` does.
+
+  Untracked paths are now listed *before* tracked ones in `payload.files`,
+  because that list is capped by truncation. A tracked file's change still
+  travels in the diff, so losing its entry costs some context; an untracked
+  file's entry is its only trace in the whole payload, so losing it hides the
+  file entirely. Appending them last meant a change touching more than 50
+  tracked files dropped every new file — the same "mostly-new-files review
+  comes back empty" failure, in a different shape. The result header also
+  counted the collected untracked paths rather than the ones that fit, so it
+  claimed files had gone out after the cap dropped them; it reports what
+  travelled now.
+
 ### Security
 
 - **A repository's exclude patterns could hang the reviewer's machine.**

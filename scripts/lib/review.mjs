@@ -134,6 +134,12 @@ export async function review(options = {}) {
   )
   const excludedFiles = [...new Set([...collectedExcluded, ...payloadExcluded])]
 
+  // Report what the payload carries, not what the working tree held. The file
+  // list is capped, so a header counting the collected untracked paths could
+  // claim files went out that the cap had already dropped.
+  const sentPaths = new Set((payload.files || []).map((file) => file.path))
+  const sentUntracked = untracked.filter((path) => sentPaths.has(path))
+
   // All changed paths may have been intentionally excluded. Do not spend
   // credits on a payload with no review target.
   if (!payload.diff?.trim() && !payload.files?.length) {
@@ -155,7 +161,7 @@ export async function review(options = {}) {
       redactions,
       excludedFiles,
       droppedFiles,
-      untracked,
+      untracked: sentUntracked,
       ref: usedRef,
       signalKeys: signals ? Object.keys(signals) : [],
     }
@@ -221,7 +227,7 @@ export async function review(options = {}) {
   return {
     ref: usedRef,
     adversarial,
-    untracked,
+    untracked: sentUntracked,
     // Reported so callers (and the --json envelope) agree with the agent name
     // already stamped into the trust-fence header by wrapForClaude.
     agent,

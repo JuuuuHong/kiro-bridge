@@ -212,6 +212,11 @@ export function buildPayload(input, options = {}) {
     // The cap is a real limit, but a silently shortened file list reads to the
     // caller as "these are all the changed files". Report the overflow so the
     // omission is visible (design §9: no silent caps).
+    //
+    // Truncation keeps the head, so the caller's ordering decides what is lost
+    // first. git.mjs relies on that: it puts untracked paths first, because a
+    // tracked file's change still travels in the diff while an untracked
+    // file's entry here is its only representation.
     droppedFiles = Math.max(0, candidates.length - LIMITS.files)
 
     const kept = candidates.slice(0, LIMITS.files).map((file) => {

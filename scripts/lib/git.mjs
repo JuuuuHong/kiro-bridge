@@ -130,9 +130,8 @@ function diffArgs(spec, { nameOnly = false, staged = false, paths = null } = {})
   const base = ['diff']
   // -z implies raw (unquoted) paths, so it must accompany every --name-only read.
   if (nameOnly) base.push('--name-only', '-z')
-  // --cached narrows the comparison to the index. Without it the comparison
-  // reaches the working tree, which is why untracked files are collected only
-  // in that case.
+  // --cached narrows the comparison to the index; without it the comparison
+  // reaches the working tree.
   if (staged) base.push('--cached')
   // A verified spec passes through verbatim: `A..B` and `A...B` are git diff
   // syntax, and it remains one element of an argv array either way.
@@ -193,10 +192,15 @@ export async function collectDiff(options = {}) {
     })
   }
 
-  // The working tree is only in scope for the default comparison. A range
-  // compares two recorded points, and --staged compares the index — in neither
-  // case would an untracked file belong in the result.
-  const worktreeInScope = !spec && !staged
+  // Untracked files are in scope exactly when the working tree is.
+  //
+  // `git diff <commit-ish>` already compares that point against the working
+  // tree, so a new file that has not been `git add`ed is part of "what changed
+  // since then" and used to be dropped — the review of a change that is mostly
+  // new files came back nearly empty. A range compares two recorded points and
+  // --staged compares the index; neither involves the working tree, so an
+  // untracked file genuinely does not belong in those.
+  const worktreeInScope = spec?.kind !== 'range' && !staged
 
   // Comparing needs something to compare against. An explicit spec has already
   // been verified, and `git diff --cached` is well defined even before the
@@ -223,10 +227,21 @@ export async function collectDiff(options = {}) {
     ? await run(diffArgs(spec, { staged, paths: allowedTracked }), options)
     : ''
 
-  const files = allowedTracked.map((path) => ({ path, reason: 'changed in diff' }))
+  // Untracked paths go first, and the order is load-bearing: buildPayload caps
+  // this list at LIMITS.files by simple truncation. A tracked file's change is
+  // already carried in payload.diff, so losing its entry costs a little
+  // context; an untracked file's entry is the *only* trace of it in the whole
+  // payload, so losing that hides the file completely. Appending them last
+  // meant a change touching more than 50 tracked files dropped every new file
+  // — the exact "review of mostly-new files comes back empty" failure this
+  // list exists to prevent.
+  const files = allowedUntracked.map((path) => ({
+    path,
+    reason: 'untracked new file — not in diff, read it directly to review',
+  }))
 
-  for (const path of allowedUntracked) {
-    files.push({ path, reason: 'untracked new file — not in diff, read it directly to review' })
+  for (const path of allowedTracked) {
+    files.push({ path, reason: 'changed in diff' })
   }
 
   // A label for humans and for the result envelope, not a ref to resolve again.

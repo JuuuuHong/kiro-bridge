@@ -389,17 +389,31 @@ test('git: untracked collects only paths, never content', async () => {
   assert.equal(r.files[0].excerpt, undefined, 'content is never included (ADR-003 decision 5)')
 })
 
-test('git: specifying ref does not mix in working-tree untracked files', async () => {
-  const calls = []
-  const execFileFn = (_b, args, _o, cb) => {
-    calls.push(args[0])
-    if (args[0] === 'rev-parse' && args[1] === '--is-inside-work-tree') return cb(null, 'true\n', '')
-    if (args[0] === 'rev-parse') return cb(null, 'abc\n', '')
-    return cb(null, '', '')
+test('git: a commit-ish keeps untracked files, a range drops them', async () => {
+  const make = () => {
+    const calls = []
+    const execFileFn = (_b, args, _o, cb) => {
+      calls.push(args[0])
+      if (args[0] === 'rev-parse' && args[1] === '--is-inside-work-tree') return cb(null, 'true\n', '')
+      if (args[0] === 'rev-parse') return cb(null, 'abc\n', '')
+      if (args[0] === 'ls-files') return cb(null, 'new.md\0', '')
+      return cb(null, '', '')
+    }
+    return { calls, execFileFn }
   }
-  const r = await collectDiff({ ref: 'main', execFileFn })
-  assert.deepEqual(r.untracked, [])
-  assert.ok(!calls.includes('ls-files'))
+
+  // `git diff main` already compares against the working tree, so a file that
+  // has not been added yet is part of what changed since that point.
+  const point = make()
+  const withPoint = await collectDiff({ ref: 'main', execFileFn: point.execFileFn })
+  assert.deepEqual(withPoint.untracked, ['new.md'])
+  assert.ok(point.calls.includes('ls-files'))
+
+  // A range compares two recorded commits; the working tree is not involved.
+  const range = make()
+  const withRange = await collectDiff({ ref: 'main..HEAD', execFileFn: range.execFileFn })
+  assert.deepEqual(withRange.untracked, [])
+  assert.ok(!range.calls.includes('ls-files'))
 })
 
 

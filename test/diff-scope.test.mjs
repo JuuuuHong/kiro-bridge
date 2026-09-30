@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { parseRefSpec, resolveRef, collectDiff } from '../scripts/lib/git.mjs'
+import { buildPayload, LIMITS } from '../scripts/lib/context.mjs'
+import { review } from '../scripts/lib/review.mjs'
+import { CONFIG_DEFAULTS } from '../scripts/lib/config.mjs'
 
 // A stub git: records every argv it is handed and answers the few reads
 // collectDiff performs. `diffNames` is returned NUL-separated, as -z produces.
@@ -147,4 +150,53 @@ test('the default comparison still means HEAD vs the working tree, untracked inc
   assert.equal(res.ref, 'HEAD')
   assert.equal(res.staged, false)
   assert.deepEqual(res.untracked, ['new.md'])
+})
+
+// --- payload ordering: the file cap must not eat the untracked entries ---
+
+test('untracked paths are listed before tracked ones', async () => {
+  const { execFileFn } = fakeGit({ diffNames: ['a.js', 'b.js'], untracked: ['new.md'] })
+  const res = await collectDiff({ execFileFn })
+  assert.equal(res.files[0].path, 'new.md', 'the only trace of a new file must survive truncation first')
+  assert.match(res.files[0].reason, /untracked/)
+})
+
+test('a change touching more tracked files than the cap still carries the new files', async () => {
+  const tracked = Array.from({ length: 60 }, (_, i) => `src/f${i}.js`)
+  const { execFileFn } = fakeGit({ diffNames: tracked, untracked: ['new-a.md', 'new-b.md'] })
+  const collected = await collectDiff({ execFileFn })
+  const { payload, droppedFiles } = buildPayload({
+    kind: 'review',
+    goal: 'g',
+    diff: 'd',
+    files: collected.files,
+  })
+  const sent = payload.files.map((f) => f.path)
+  assert.ok(sent.includes('new-a.md') && sent.includes('new-b.md'), 'new files must not be the first casualty')
+  assert.equal(payload.files.length, LIMITS.files)
+  assert.ok(droppedFiles > 0, 'the overflow is still reported')
+})
+
+test('review reports the untracked files that actually travelled', async () => {
+  // The header used to count what the working tree held, so it claimed new
+  // files had gone out after the cap dropped them.
+  const tracked = Array.from({ length: 60 }, (_, i) => `src/f${i}.js`)
+  const res = await review({
+    collectDiffFn: async () => ({
+      diff: 'd',
+      files: [
+        ...tracked.map((path) => ({ path, reason: 'changed in diff' })),
+        { path: 'late.md', reason: 'untracked new file — not in diff, read it directly to review' },
+      ],
+      excludedFiles: [],
+      untracked: ['late.md'],
+      ref: 'HEAD',
+    }),
+    dryRun: true,
+    config: CONFIG_DEFAULTS,
+    runFn: async () => { throw new Error('must not send') },
+  })
+  const sent = res.payload.files.map((f) => f.path)
+  assert.equal(sent.includes('late.md'), false, 'this fixture deliberately puts it past the cap')
+  assert.deepEqual(res.untracked, [], 'the result must not claim it travelled')
 })
