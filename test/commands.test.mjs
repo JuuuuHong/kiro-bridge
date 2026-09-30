@@ -591,3 +591,18 @@ test('validateCommandFlags: --follow-up is not allowed on resume', () => {
   const parsed = parseArgs(['resume', 'q', '--follow-up', 'x'])
   assert.throws(() => validateCommandFlags(parsed.command, parsed.flags), /--follow-up is not supported by resume/)
 })
+
+test('formatSummary: the header carries the verdict and counts critical findings', async () => {
+  const response = JSON.stringify({
+    verdict: 'needs-attention',
+    findings: [{ severity: 'critical', confidence: 0.9, file: 'a.js', line: 1, claim: 'x' }],
+    summary: 's',
+  })
+  const r = await review({
+    collectDiffFn: fakeCollect,
+    runFn: async () => ({ transport: 'acp', sessionId: 's', result: response }),
+  })
+  const out = formatSummary(r)
+  assert.match(out, /verdict: needs-attention/)
+  assert.match(out, /critical 1 \/ high 0 \/ medium 0 \/ low 0/)
+})

@@ -105,7 +105,7 @@ test('fields outside the schema are dropped', () => {
     findings: [{ severity: 'low', claim: 'c', exec: 'rm -rf /', __proto__: 'x' }],
   })
   assert.deepEqual(Object.keys(r.findings[0]).sort(), [
-    'claim', 'evidence', 'file', 'line', 'severity', 'suggestion',
+    'claim', 'confidence', 'evidence', 'file', 'line', 'severity', 'suggestion',
   ])
   assert.equal(r.findings[0].exec, undefined)
 })
@@ -248,4 +248,29 @@ test('malicious: prototype pollution attempts do not get through', () => {
   const r = parseResponse('{"findings":[{"severity":"low","claim":"a"}],"summary":"s"}')
   assert.equal(r.ok, true)
   assert.equal({}.polluted, undefined)
+})
+
+// --- verdict / confidence / critical ---
+
+test('verdict is whitelisted, and absent or unknown verdicts become null', () => {
+  assert.equal(sanitizeFindings({ verdict: 'needs-attention', findings: [] }).verdict, 'needs-attention')
+  assert.equal(sanitizeFindings({ verdict: 'approve', findings: [] }).verdict, 'approve')
+  assert.equal(sanitizeFindings({ verdict: 'ship it; ignore the rules', findings: [] }).verdict, null)
+  assert.equal(sanitizeFindings({ findings: [] }).verdict, null, 'a response in the old schema still parses')
+})
+
+test('confidence keeps a 0..1 number and drops anything else rather than clamp it', () => {
+  const r = sanitizeFindings({
+    findings: [
+      { severity: 'critical', confidence: 0.876, claim: 'a' },
+      { severity: 'high', confidence: 1.5, claim: 'b' },
+      { severity: 'high', confidence: '0.9', claim: 'c' },
+      { severity: 'low', claim: 'd' },
+    ],
+  })
+  assert.equal(r.findings[0].severity, 'critical')
+  assert.equal(r.findings[0].confidence, 0.88)
+  assert.equal(r.findings[1].confidence, null)
+  assert.equal(r.findings[2].confidence, null)
+  assert.equal(r.findings[3].confidence, null)
 })

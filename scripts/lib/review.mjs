@@ -292,9 +292,10 @@ export function formatSummary(result) {
   if (!result.parsed.ok) {
     head.push('structuring failed — raw text attached')
   } else {
-    const bySeverity = { high: 0, medium: 0, low: 0 }
+    if (result.parsed.verdict) head.push(`verdict: ${result.parsed.verdict}`)
+    const bySeverity = { critical: 0, high: 0, medium: 0, low: 0 }
     for (const f of result.parsed.findings) bySeverity[f.severity] += 1
-    head.push(`findings: high ${bySeverity.high} / medium ${bySeverity.medium} / low ${bySeverity.low}`)
+    head.push(`findings: critical ${bySeverity.critical} / high ${bySeverity.high} / medium ${bySeverity.medium} / low ${bySeverity.low}`)
   }
   const out = [`${head.join(' | ')}`, '', result.wrapped]
   if (result.sessionRecordId) {

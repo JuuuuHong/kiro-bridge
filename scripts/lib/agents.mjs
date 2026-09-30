@@ -33,8 +33,12 @@ const REVIEWER_PROMPT = [
   '- Only claim what you confirmed by reading the file directly. If you could not read it, say so in summary.',
   '- Do not modify files. The write tool is not trusted.',
   '- Output only the JSON schema below as your response. Do not add prose explanation.',
+  '- severity critical: data loss, a security hole, or a crash on a common path. Use it sparingly.',
+  '- confidence: 0.0-1.0, how sure you are the defect is real. Below 0.5 means you could not confirm it.',
+  '- verdict: needs-attention if any finding should block the change as written; otherwise approve.',
   '',
-  '{"findings":[{"severity":"low|medium|high","file":"path","line":0,',
+  '{"verdict":"approve|needs-attention","findings":[{"severity":"low|medium|high|critical",',
+  '"confidence":0.0,"file":"path","line":0,',
   '"claim":"one-sentence defect statement","evidence":"evidence","suggestion":"fix direction"}],',
   '"summary":"overall assessment"}',
 ].join('\n')

@@ -6,7 +6,17 @@
 
 import { sanitizeTerminal } from './sanitize.mjs'
 
-export const SEVERITIES = ['low', 'medium', 'high']
+export const SEVERITIES = ['low', 'medium', 'high', 'critical']
+export const VERDICTS = ['approve', 'needs-attention']
+
+// A 0..1 self-assessed confidence, or null when absent or not a number in
+// range. Clamping an out-of-range value would invent a precision the agent
+// never claimed, so it is dropped instead.
+function parseConfidence(value) {
+  const n = typeof value === 'number' ? value : Number.NaN
+  if (!Number.isFinite(n) || n < 0 || n > 1) return null
+  return Math.round(n * 100) / 100
+}
 
 export const CAPS = {
   findings: 100,
@@ -121,6 +131,7 @@ export function sanitizeFindings(parsed) {
     const lineNum = Number(item?.line)
     return {
       severity,
+      confidence: parseConfidence(item?.confidence),
       file: clean(item?.file, CAPS.file),
       line: Number.isFinite(lineNum) && lineNum >= 0 ? Math.floor(lineNum) : 0,
       claim: clean(item?.claim, CAPS.claim),
@@ -129,6 +140,7 @@ export function sanitizeFindings(parsed) {
     }
   })
   return {
+    verdict: VERDICTS.includes(parsed?.verdict) ? parsed.verdict : null,
     findings,
     summary: clean(parsed?.summary, CAPS.summary),
     dropped: Math.max(0, rawFindings.length - findings.length),
@@ -140,7 +152,7 @@ export function parseResponse(rawText) {
   const raw = clean(rawText, CAPS.raw)
   const parsed = extractJsonObject(raw, (obj) => Array.isArray(obj.findings))
   if (!parsed || !Array.isArray(parsed.findings)) {
-    return { ok: false, findings: [], summary: '', dropped: 0, raw }
+    return { ok: false, verdict: null, findings: [], summary: '', dropped: 0, raw }
   }
   return { ok: true, ...sanitizeFindings(parsed), raw }
 }
@@ -151,7 +163,7 @@ export function wrapForClaude(result, options = {}) {
   const notice = webDerived ? `${WRAPPER_NOTICE}\n${WEB_NOTICE}` : WRAPPER_NOTICE
 
   const body = result.ok
-    ? JSON.stringify({ findings: result.findings, summary: result.summary }, null, 2)
+    ? JSON.stringify({ verdict: result.verdict ?? null, findings: result.findings, summary: result.summary }, null, 2)
     : result.raw
 
   const header = result.ok

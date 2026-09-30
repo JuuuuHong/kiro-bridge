@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Review verdict, per-finding confidence, and a `critical` severity.** The
+  reviewer returned a flat list with three severities and nothing to separate
+  a confirmed defect from a hunch. It now reports a top-level `verdict`
+  (`approve` / `needs-attention`, shown in the result header), a `confidence`
+  of 0-1 on each finding, and `critical` for data loss, security holes, and
+  crashes on a common path. All three are whitelisted or range-checked like
+  every other field: an unknown verdict or an out-of-range confidence becomes
+  `null` rather than being coerced. A response in the old schema still parses.
+  The new instructions live in the reviewer agent's prompt, so they take
+  effect after `/kiro-bridge:setup` reinstalls it.
+
 - **Review scope: commit ranges and `--staged`.** `ref` was verified with
   `rev-parse --verify <ref>^{commit}`, which accepts a single commit-ish and
   nothing else, so `origin/main..HEAD` came back as "unknown git ref". The only

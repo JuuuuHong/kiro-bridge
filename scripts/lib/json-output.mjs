@@ -28,6 +28,7 @@ function delegationFields(result) {
     agent: result.agent ?? null,
     transport: result.transport ?? null,
     parseOk: Boolean(result.parsed?.ok),
+    verdict: result.parsed?.verdict ?? null,
     findings: result.parsed?.findings ?? [],
     summary: result.parsed?.summary ?? '',
     droppedFindings: result.parsed?.dropped ?? 0,
