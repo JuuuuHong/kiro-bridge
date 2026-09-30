@@ -154,3 +154,28 @@ test('detectCapability: a negative cache expires and ACP is probed again', async
   assert.equal(recovered.cached, false)
   assert.equal(probes, 2)
 })
+
+// --- the capability cache leaves the user's settings as they were ---
+
+test('detectCapability: caching writes only its entry, never the merged defaults', async () => {
+  const { writeFileSync, mkdirSync, readFileSync } = await import('node:fs')
+  mkdirSync(home, { recursive: true })
+  writeFileSync(configPath(), JSON.stringify({ redaction: { privateHosts: ['.corp'] } }))
+
+  await detectCapability({ execFileFn: versionOk, probeFn: async () => ({ available: true }) })
+
+  const onDisk = JSON.parse(readFileSync(configPath(), 'utf8'))
+  assert.deepEqual(onDisk.redaction, { privateHosts: ['.corp'] }, 'defaults must not be frozen into the file')
+  assert.equal(onDisk.capabilities['2.20.1'].transport, TRANSPORTS.ACP)
+  assert.ok(loadConfig().redaction.excludeFiles.includes('*.pem'), 'defaults still apply at load time')
+})
+
+test('detectCapability: a config.json that does not parse is left untouched', async () => {
+  const { writeFileSync, mkdirSync, readFileSync } = await import('node:fs')
+  mkdirSync(home, { recursive: true })
+  writeFileSync(configPath(), '{ "envPassthrough": ["AWS_PROFILE"], oops')
+
+  await detectCapability({ execFileFn: versionOk, probeFn: async () => ({ available: true }) })
+
+  assert.equal(readFileSync(configPath(), 'utf8'), '{ "envPassthrough": ["AWS_PROFILE"], oops')
+})

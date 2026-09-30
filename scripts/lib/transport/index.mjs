@@ -5,7 +5,7 @@
 import { execFile, spawn } from 'node:child_process'
 import * as acp from './acp.mjs'
 import * as subprocess from './subprocess.mjs'
-import { loadConfig, loadUserConfig, saveConfig, getCachedCapability, setCachedCapability } from '../config.mjs'
+import { loadConfig, loadUserConfig, saveCacheEntry, getCachedCapability } from '../config.mjs'
 import { childEnvFromConfig } from '../env.mjs'
 import { bridgeError, CODES } from '../errors.mjs'
 
@@ -37,9 +37,8 @@ export async function detectCapability(options = {}) {
     throw bridgeError(CODES.TRANSPORT_UNAVAILABLE, { bin })
   }
 
-  // Read/write the *user* layer only: this object is round-tripped through
-  // saveConfig, and merging the project overlay here would persist a
-  // repository-local redaction rule into the user's global config.
+  // The cache is read from the user layer only; saveCacheEntry writes the one
+  // entry back, so no project overlay or default ever reaches config.json.
   const config = loadUserConfig()
   if (!force) {
     const cached = getCachedCapability(config, version)
@@ -62,7 +61,7 @@ export async function detectCapability(options = {}) {
   }
 
   try {
-    saveConfig(setCachedCapability(config, version, capability))
+    saveCacheEntry('capabilities', version, capability)
   } catch {
     // Cache save failure is not fatal. It's detected again on the next call.
   }

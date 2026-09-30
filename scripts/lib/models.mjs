@@ -11,7 +11,7 @@
 // every delegated call. Without it a caller guesses an id, we spawn, kiro-cli
 // rejects it, and the round trip is only visible after the process is gone.
 import { execFile } from 'node:child_process'
-import { loadConfig, loadUserConfig, saveConfig, getCachedModels, setCachedModels } from './config.mjs'
+import { loadConfig, loadUserConfig, saveCacheEntry, getCachedModels } from './config.mjs'
 import { childEnvFromConfig } from './env.mjs'
 import { sanitizeLine } from './sanitize.mjs'
 import { bridgeError, BridgeError, CODES } from './errors.mjs'
@@ -150,7 +150,7 @@ export async function listModels(options = {}) {
     const cached = getCachedModels(config, version)
     const detectedAt = Date.parse(cached?.detectedAt || '')
     if (cached && Number.isFinite(detectedAt) && now - detectedAt < ttlMs) {
-      // Re-guard on read. Everything written through setCachedModels is clean,
+      // Re-guard on read. Everything written through saveCacheEntry is clean,
       // but that only holds while the file is exactly what we last wrote — and
       // every consumer downstream assumes models is an array of valid ids.
       //
@@ -192,7 +192,7 @@ export async function listModels(options = {}) {
     // Read-modify-write on config.json, same as detectCapability. Two bridge
     // processes racing here can lose one of the two cache entries; both are
     // caches that rebuild on the next call, so this is not worth a lock.
-    saveConfig(setCachedModels(config, version, entry))
+    saveCacheEntry('models', version, entry)
   } catch {
     // Cache save failure is not fatal — it is detected again next call.
   }

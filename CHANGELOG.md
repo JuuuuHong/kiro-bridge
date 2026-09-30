@@ -168,6 +168,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shows it. `review <ref> --bg` also checks the ref and `--staged` scope in the
   foreground, so a typo fails immediately instead of after a job id is issued.
 
+- **Caching a capability or model list froze the defaults into config.json.**
+  Both caches saved the whole loaded config, which had been merged with the
+  defaults, so the default redaction list was written to disk the first time
+  anything was cached — and from then on the on-disk copy won, so an exclude
+  pattern added in a later release never reached that user. A config.json that
+  failed to parse was replaced by defaults on the next save, deleting
+  `privateHosts` and `envPassthrough`. The caches now write only their own
+  entry into the file as it is on disk, and leave a file that does not parse
+  alone. A config.json that already carries a frozen `redaction.excludeFiles`
+  keeps it; delete that key to pick up the defaults again.
+
 - **Foreground runs outlived the Bash tool that launched them.** Claude Code's
   Bash tool stops a command after 120s by default, shorter than review's own
   180s budget, and task/spec/resume default to 600s — the tool's ceiling, with

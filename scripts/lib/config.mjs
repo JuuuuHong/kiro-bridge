@@ -144,6 +144,27 @@ export function saveConfig(config) {
   return target
 }
 
+// Writes one cache entry into config.json and leaves every other byte of the
+// user's settings as they were. Saving the loaded config instead wrote the
+// defaults it had been merged with back to disk: the redaction list was frozen
+// at the version that first cached something, so a default added later never
+// reached that user, and a file that failed to parse was replaced by defaults,
+// deleting privateHosts and envPassthrough. A file that exists but does not
+// parse is left alone; until it is repaired nothing is cached, so every call
+// re-probes — slower, but it never costs the user their settings.
+export function saveCacheEntry(section, kiroVersion, entry) {
+  if (!kiroVersion) return null
+  let onDisk = {}
+  try {
+    onDisk = JSON.parse(readFileSync(configPath(), 'utf8'))
+  } catch (err) {
+    if (err?.code !== 'ENOENT') return null
+  }
+  if (!onDisk || typeof onDisk !== 'object' || Array.isArray(onDisk)) return null
+  const current = onDisk[section] && typeof onDisk[section] === 'object' ? onDisk[section] : {}
+  return saveConfig({ ...onDisk, [section]: { ...current, [kiroVersion]: entry } })
+}
+
 export function getCachedCapability(config, kiroVersion) {
   if (!kiroVersion) return null
   return config.capabilities[kiroVersion] || null
