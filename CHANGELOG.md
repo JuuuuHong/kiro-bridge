@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **The ACP transport now pins the v2 agent engine.** `kiro-cli acp` follows
+  the CLI's default engine — v2 today — and v3 refuses a v2-shaped custom agent
+  and runs the turn under the default, full-permission agent instead, so a
+  default flip would drop the reviewer's read-only sandbox without an error.
+  The subprocess path already pinned v2 for this reason. Checked on kiro-cli
+  2.26.0: the handshake and a `session/load` both succeed with the flag. A
+  session created under v3 (`chat.agentEngine` set to v3) may no longer load;
+  those ran under the full-permission default agent anyway.
 ## [0.3.0] - 2026-09-30
 
 ### Added

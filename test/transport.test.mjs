@@ -612,3 +612,17 @@ test('events: official size and supported alias contextSize still work', () => {
   assert.equal(normalizeAcpUpdate({ sessionUpdate: 'usage_update', size: 100 }).size, 100)
   assert.equal(normalizeAcpUpdate({ sessionUpdate: 'usage_update', contextSize: 200 }).size, 200)
 })
+
+// --- the ACP engine is pinned, never left to the CLI default ---
+
+test('acp: probe and run both pin the v2 engine', async () => {
+  const seen = []
+  const recording = (bin, args, opts) => { seen.push(args); return mockSpawn('ok')(bin, args, opts) }
+  await acp.probe({ spawnFn: recording, timeoutMs: 10_000 })
+  await acp.run(PAYLOAD, { spawnFn: recording, timeoutMs: 10_000 })
+  assert.equal(seen.length, 2)
+  for (const args of seen) {
+    assert.equal(args[0], 'acp')
+    assert.deepEqual(args.slice(1, 3), ['--agent-engine', 'v2'])
+  }
+})

@@ -8,6 +8,16 @@ import { normalizeAcpUpdate, normalizeKiroMetadata, createCollector, EVENT_TYPES
 import { loadConfig } from '../config.mjs'
 import { childEnvFromConfig } from '../env.mjs'
 import { bridgeError, classifyOutput, classifyStopReason, CODES } from '../errors.mjs'
+import { AGENT_ENGINE } from './subprocess.mjs'
+
+// Pinned for the reason subprocess.mjs gives: v3 refuses a v2-shaped custom
+// agent and runs the turn under the default, full-permission agent instead —
+// the reviewer's read-only sandbox gone without an error. `acp` follows the
+// CLI's default engine, which is v2 today (kiro-cli 2.26.0), and new features
+// ship to v3 first, so a default flip would do exactly that. The probe passes
+// the same flag, so a kiro-cli that cannot take it fails the handshake and
+// falls back rather than failing every call.
+const ACP_ARGS = ['acp', '--agent-engine', AGENT_ENGINE]
 
 export const PROTOCOL_VERSION = 1
 
@@ -72,7 +82,7 @@ export async function probe({
 } = {}) {
   let child
   try {
-    child = spawnFn(bin, ['acp'], { stdio: ['pipe', 'pipe', 'pipe'], env: childEnvFromConfig(config) })
+    child = spawnFn(bin, [...ACP_ARGS], { stdio: ['pipe', 'pipe', 'pipe'], env: childEnvFromConfig(config) })
   } catch (err) {
     return { available: false, reason: String(err?.message || err) }
   }
@@ -132,7 +142,7 @@ export async function run(payload, options = {}) {
     config = loadConfig(),
   } = options
 
-  const args = ['acp']
+  const args = [...ACP_ARGS]
   if (agent) args.push('--agent', agent)
   if (model) args.push('--model', model)
   if (effort) args.push('--effort', effort)
