@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`setup` installed agents where kiro-cli never looks when
   `KIRO_AGENTS_DIR` was set.** kiro-cli does not read the variable (measured
   on 2.26.0), so it now warns and says to unset it.
+
+- **A test wrote a fake review into the user's real usage log.** It called
+  `review()` without isolating `KIRO_BRIDGE_HOME`, so every test run appended
+  one — 62 of 67 recorded reviews on one machine — and inflated the totals
+  `status` reports.
+
 ## [0.3.0] - 2026-09-30
 
 ### Added

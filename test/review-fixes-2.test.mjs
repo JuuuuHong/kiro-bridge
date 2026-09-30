@@ -254,14 +254,27 @@ test('review: surfaces the capped file count in the human summary', async () => 
   const files = Array.from({ length: LIMITS.files + 3 }, (_, i) => ({
     path: `src/f${i}.mjs`, reason: 'changed in diff',
   }))
-  const res = await review({
-    collectDiffFn: async () => ({ diff: 'diff text', files, untracked: [], excludedFiles: [], ref: 'HEAD' }),
-    runFn: async () => ({
-      transport: 'acp', sessionId: null,
-      result: '{"findings":[],"summary":"s"}',
-    }),
-    config: { redaction: {}, logRetentionDays: 30 },
-  })
+  // review() records usage under KIRO_BRIDGE_HOME. withTempHome restores the
+  // variable before an async body finishes, so the isolation is done inline —
+  // without it every test run appended a fake review to the user's real log.
+  const home = mkdtempSync(join(tmpdir(), 'kb-fix2-'))
+  const prev = process.env.KIRO_BRIDGE_HOME
+  process.env.KIRO_BRIDGE_HOME = home
+  let res
+  try {
+    res = await review({
+      collectDiffFn: async () => ({ diff: 'diff text', files, untracked: [], excludedFiles: [], ref: 'HEAD' }),
+      runFn: async () => ({
+        transport: 'acp', sessionId: null,
+        result: '{"findings":[],"summary":"s"}',
+      }),
+      config: { redaction: {}, logRetentionDays: 30 },
+    })
+  } finally {
+    if (prev === undefined) delete process.env.KIRO_BRIDGE_HOME
+    else process.env.KIRO_BRIDGE_HOME = prev
+    rmSync(home, { recursive: true, force: true })
+  }
   assert.equal(res.droppedFiles, 3)
   assert.match(formatSummary(res), /file list capped: 3 not listed/)
 })
