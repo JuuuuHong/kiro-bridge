@@ -35,7 +35,7 @@ export async function checkAuth(options = {}) {
 }
 
 export async function setup(options = {}) {
-  const { bin = 'kiro-cli', force = false, dir = agentsDir() } = options
+  const { bin = 'kiro-cli', force = false, dir = agentsDir(), env = process.env } = options
   const steps = []
 
   const version = await detectVersion({ bin, ...options })
@@ -69,6 +69,19 @@ export async function setup(options = {}) {
       ok: true,
       detail: `${capability.transport} fallback (${capability.reason})`,
       warning: true,
+    })
+  }
+
+  // kiro-cli does not read KIRO_AGENTS_DIR — measured on 2.26.0: an agent that
+  // exists only there is missing from `kiro-cli agent list` with or without
+  // the variable. It finds ~/.kiro/agents and the workspace's .kiro/agents, so
+  // installing into the variable's directory installs where nothing looks.
+  if (env.KIRO_AGENTS_DIR) {
+    steps.push({
+      step: 'agents-dir',
+      ok: true,
+      warning: true,
+      detail: `KIRO_AGENTS_DIR is set, so agents install into ${dir} — kiro-cli does not read that variable and will not find them there. Unset it to install into ~/.kiro/agents.`,
     })
   }
 

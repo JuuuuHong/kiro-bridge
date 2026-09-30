@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   foreground one prints, header included; it kept only the fenced findings, so
   truncation, the file cap, exclusions and the verdict never reached
   `result`.
+
+- **`setup` installed agents where kiro-cli never looks when
+  `KIRO_AGENTS_DIR` was set.** kiro-cli does not read the variable (measured
+  on 2.26.0), so it now warns and says to unset it.
 ## [0.3.0] - 2026-09-30
 
 ### Added

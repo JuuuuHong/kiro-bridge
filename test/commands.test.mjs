@@ -336,6 +336,21 @@ test('setup: the happy path installs agents and records the convention', async (
   rmSync(dir, { recursive: true, force: true })
 })
 
+test('setup: warns that kiro-cli will not find agents installed via KIRO_AGENTS_DIR', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agents-'))
+  const execFileFn = (_b, args, _o, cb) => {
+    if (args[0] === '--version') return cb(null, 'kiro-cli 2.20.1\n', '')
+    if (args[0] === 'whoami') return cb(null, 'user@example.com\n', '')
+    return cb(null, '', '')
+  }
+  const run = (env) => setup({ execFileFn, dir, env, probeFn: async () => ({ available: true }), validateFn: async () => true })
+  const warned = (await run({ KIRO_AGENTS_DIR: dir })).steps.find((s) => s.step === 'agents-dir')
+  assert.ok(warned?.warning)
+  assert.match(warned.detail, /does not read that variable/)
+  assert.equal((await run({})).steps.find((s) => s.step === 'agents-dir'), undefined)
+  rmSync(dir, { recursive: true, force: true })
+})
+
 // --- git argument safety ---
 
 test('git: ref is passed only as an argument array and never touches a shell', async () => {
