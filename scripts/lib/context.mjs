@@ -191,7 +191,12 @@ export function buildPayload(input, options = {}) {
 
   const payload = { kind, goal: scrub(goal, 'goal', LIMITS.goal) }
 
+  // How much of the diff the cap cut off. Reported because a truncated diff
+  // looks complete to everyone downstream: the files past the cut still carry
+  // "changed in diff" labels, and the review reads as if it covered them.
+  let diffTruncatedChars = 0
   if (input.diff != null) {
+    diffTruncatedChars = Math.max(0, stripControlChars(String(input.diff)).length - LIMITS.diff)
     payload.diff = scrub(input.diff, 'diff', LIMITS.diff)
   }
 
@@ -245,5 +250,5 @@ export function buildPayload(input, options = {}) {
       .filter(Boolean)
   }
 
-  return { payload, redactions, excludedFiles: excluded, droppedFiles }
+  return { payload, redactions, excludedFiles: excluded, droppedFiles, diffTruncatedChars }
 }

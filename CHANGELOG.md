@@ -23,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carried it raw under `external: false` — agent output outside the trust
   boundary every other response gets (ADR-004). Both now wrap it like a
   response, with the web notice, and the envelope is marked external.
+
+### Fixed
+
+- **A truncated diff was passed off as complete.** The payload cap cuts the
+  diff at 200,000 characters, but only the file-list cap was reported, so a
+  review of a large change read as if it covered files it never saw. The
+  header, `--dry-run`, and the `--json` envelope (`diffTruncatedChars`) now
+  say how much was cut. A `--bg` review now stores the same summary a
+  foreground one prints, header included; it kept only the fenced findings, so
+  truncation, the file cap, exclusions and the verdict never reached
+  `result`.
 ## [0.3.0] - 2026-09-30
 
 ### Added

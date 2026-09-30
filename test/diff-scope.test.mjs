@@ -270,3 +270,38 @@ test('review --bg rejects an unknown ref before handing out a job id', async () 
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+// --- a truncated diff is reported, not passed off as complete ---
+
+test('buildPayload reports how much of the diff the cap cut off', () => {
+  const over = buildPayload({ kind: 'review', goal: 'g', diff: 'x'.repeat(LIMITS.diff + 1234) }, { redaction: {} })
+  assert.equal(over.diffTruncatedChars, 1234)
+  const under = buildPayload({ kind: 'review', goal: 'g', diff: 'small' }, { redaction: {} })
+  assert.equal(under.diffTruncatedChars, 0)
+})
+
+test('the review header says when the diff was truncated', async () => {
+  const { formatSummary } = await import('../scripts/lib/review.mjs')
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  // review() records usage under KIRO_BRIDGE_HOME; keep it off the real log.
+  const home = mkdtempSync(join(tmpdir(), 'kb-trunc-'))
+  const prev = process.env.KIRO_BRIDGE_HOME
+  process.env.KIRO_BRIDGE_HOME = home
+  try {
+    const collectDiffFn = async () => ({ diff: 'x'.repeat(LIMITS.diff + 10), files: [], untracked: [], excludedFiles: [], ref: 'HEAD' })
+    const res = await review({
+      collectDiffFn,
+      runFn: async () => ({ transport: 'acp', sessionId: null, result: '{"findings":[],"summary":"s"}' }),
+      config: CONFIG_DEFAULTS,
+    })
+    assert.match(formatSummary(res), /diff truncated: last 10 chars not sent/)
+    const dry = await review({ collectDiffFn, dryRun: true, config: CONFIG_DEFAULTS })
+    assert.match(formatSummary(dry), /last 10 chars are not sent/)
+  } finally {
+    if (prev === undefined) delete process.env.KIRO_BRIDGE_HOME
+    else process.env.KIRO_BRIDGE_HOME = prev
+    rmSync(home, { recursive: true, force: true })
+  }
+})

@@ -128,6 +128,7 @@ export async function review(options = {}) {
     redactions,
     excludedFiles: payloadExcluded,
     droppedFiles,
+    diffTruncatedChars,
   } = buildPayload(
     { kind: 'review', goal: outboundGoal, diff, files, constraints, signals },
     { redaction: config.redaction },
@@ -161,6 +162,7 @@ export async function review(options = {}) {
       redactions,
       excludedFiles,
       droppedFiles,
+      diffTruncatedChars,
       untracked: sentUntracked,
       ref: usedRef,
       signalKeys: signals ? Object.keys(signals) : [],
@@ -239,6 +241,7 @@ export async function review(options = {}) {
     redactions,
     excludedFiles,
     droppedFiles,
+    diffTruncatedChars,
     // Which execution evidence travelled with the payload. Absence is
     // meaningful: the review then found what it found by reading alone.
     signalKeys: signals ? Object.keys(signals) : [],
@@ -268,6 +271,9 @@ export function formatSummary(result) {
     if (result.droppedFiles > 0) {
       lines.push(`NOTE: ${result.droppedFiles} more changed file(s) exceeded the ${LIMITS.files}-file payload cap and are not listed.`)
     }
+    if (result.diffTruncatedChars > 0) {
+      lines.push(`NOTE: the diff exceeded the ${LIMITS.diff}-char payload cap; its last ${result.diffTruncatedChars} chars are not sent.`)
+    }
     return lines.join('\n')
   }
 
@@ -283,6 +289,9 @@ export function formatSummary(result) {
   }
   if (result.droppedFiles > 0) {
     head.push(`file list capped: ${result.droppedFiles} not listed`)
+  }
+  if (result.diffTruncatedChars > 0) {
+    head.push(`diff truncated: last ${result.diffTruncatedChars} chars not sent — review a narrower ref`)
   }
   // Absence is meaningful here: a review with no execution evidence found
   // whatever it found by reading alone.

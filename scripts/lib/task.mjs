@@ -452,7 +452,11 @@ const WORKER_EXECUTORS = {
     if (res.empty) {
       return { wrapped: formatReviewSummary(res), sessionId: null, transport: null, metadata: undefined }
     }
-    return res
+    // The stored body is the foreground summary, header included, not the bare
+    // fenced findings: the header is where a truncated diff, a capped file list,
+    // excluded files and the verdict are reported, and a background review —
+    // the path a large change takes — dropped all of it.
+    return { ...res, wrapped: formatReviewSummary(res) }
   },
 }
 

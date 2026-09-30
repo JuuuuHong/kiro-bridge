@@ -253,6 +253,9 @@ test('runWorker: review job collects the diff in the worker and stores the wrapp
   const body = jobs.readResult(jobId, CWD)
   assert.ok(body.includes(TRUST_FENCE.open), 'result body is the same wrapped findings as foreground')
   assert.match(body, /findings/)
+  assert.match(body, /mode: adversarial/, 'the foreground header travels with a background result')
+  assert.ok(body.indexOf('mode: adversarial') < body.indexOf(TRUST_FENCE.open), 'the header sits outside the fence')
+  assert.ok(!/Resume this session/.test(body), 'no resume hint before the worker has registered the session')
 })
 
 test('runWorker: a review job with no reviewable changes stores the empty message, not undefined', async () => {
