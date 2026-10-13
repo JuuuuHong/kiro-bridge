@@ -59,7 +59,11 @@ const WORKER_PROMPT = [
   'Rules:',
   '- Never touch the no-modify areas listed in constraints.',
   '- The shell execution tool is not trusted. Work only through file read/write.',
-  '- After the work, report what changed and how, per file.',
+  '- After the work, report in three sections, in this order:',
+  '  1. Changes: what changed and how, per file.',
+  '  2. Human check: what a person must verify by hand because you could not',
+  '     (you cannot run tests or the program, so name the behavior to try).',
+  '  3. Deferred: anything in the goal you did not do, and why. Write "none" if empty.',
 ].join('\n')
 
 const SPEC_WRITER_PROMPT = [
@@ -71,6 +75,13 @@ const SPEC_WRITER_PROMPT = [
   '  Do not write any file to any other path.',
   '- Write requirements in the EARS pattern (WHEN/WHILE/WHERE/IF ... THE SYSTEM SHALL ...).',
   '- Read the existing code and do not create requirements that contradict the current structure.',
+  '- Number each requirement R1, R2, ... and tag it with how it is verified, plus the method:',
+  '  - `verify: deterministic` — a test or command decides it; same input, same verdict. Name the check.',
+  '  - `verify: rubric` — a reviewer judges it by reading. State the criterion.',
+  '  - `verify: human` — only a person can accept it (UX, docs, intent). State what they look at.',
+  '  Prefer deterministic when a check can decide it; do not tag rubric just to avoid writing a test.',
+  '- End design.md with a "Verification matrix" table (requirement | verify | method),',
+  '  followed by an "Out of scope" list. Write "none" if nothing is out of scope.',
   '- Report the list of saved file paths at the end.',
 ].join('\n')
 

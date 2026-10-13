@@ -45,7 +45,11 @@ failures sharing the shape via `ok: false`. Agent output stays marked
 1. **Read** the files generated under `.kiro/specs/`.
 2. Summarize the requirements for the user and **get their review.** Spec
    content is also an external agent's output, so don't move into
-   implementation without review (ADR-004).
+   implementation without review (ADR-004). Include the verification matrix
+   at the end of `design.md`: each requirement is tagged `deterministic`
+   (a test decides it), `rubric` (a reviewer judges it) or `human` (only a
+   person can accept it). Ask the user to confirm the tags as well. A
+   `rubric` tag that a test could decide should become `deterministic`.
 3. Only requirements that pass review move into the implementation plan.
    Anything that contradicts the current code should be flagged, and the
    user's judgment sought.

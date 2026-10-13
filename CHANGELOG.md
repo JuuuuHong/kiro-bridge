@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The spec writer tags each requirement with how it is verified.**
+  Requirements are numbered and marked `verify: deterministic`, `rubric` or
+  `human`, each with its check, criterion or the thing a person looks at.
+  `design.md` now ends with a verification matrix and an out-of-scope list. A
+  spec previously stopped at acceptance criteria and left it to the reader to
+  decide which ones a test could settle.
+- **`task --write` reports end with Human check and Deferred sections.** The
+  worker cannot run tests or the program, so its report now says what is left
+  for a person to try and what part of the goal it skipped, next to the
+  per-file changes. Re-run `/kiro-bridge:setup` to install the updated agents.
+
 ## [0.3.1] - 2026-09-30
 
 ### Security
