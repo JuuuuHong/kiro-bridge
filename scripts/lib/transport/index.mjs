@@ -8,6 +8,7 @@ import * as subprocess from './subprocess.mjs'
 import { loadConfig, loadUserConfig, saveCacheEntry, getCachedCapability } from '../config.mjs'
 import { childEnvFromConfig } from '../env.mjs'
 import { bridgeError, CODES } from '../errors.mjs'
+import { assertNoShadowingAgents } from '../shadow.mjs'
 
 export const TRANSPORTS = { ACP: 'acp', SUBPROCESS: 'subprocess' }
 export const NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000
@@ -71,6 +72,9 @@ export async function detectCapability(options = {}) {
 // Runs the payload. Specifying transport skips detection.
 export async function run(payload, options = {}) {
   const { transport: forced, ...rest } = options
+  // Before detection too: capability probing spawns kiro-cli, and a refused
+  // call should not have started anything.
+  if (rest.agent) assertNoShadowingAgents(rest.cwd ?? process.cwd())
   let chosen = forced
 
   if (!chosen) {

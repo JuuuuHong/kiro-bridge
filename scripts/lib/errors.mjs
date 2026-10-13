@@ -25,6 +25,9 @@ export const CODES = {
   INCOMPLETE: 'INCOMPLETE',
   // The agent explicitly refused the request (stopReason: refusal).
   REFUSED: 'REFUSED',
+  // The checkout ships an agent under a kiro-bridge name, which kiro-cli would
+  // load in place of the installed one (shadow.mjs). Refused before any spawn.
+  AGENT_SHADOWED: 'AGENT_SHADOWED',
 }
 
 export class BridgeError extends Error {
@@ -118,6 +121,8 @@ export const MESSAGES = {  [CODES.TIMEOUT]: 'Timed out. Returning partial output
   [CODES.INCOMPLETE]:
     'Kiro stopped before finishing (token or turn limit). Partial output only; not a trustworthy result.',
   [CODES.REFUSED]: 'Kiro refused the request. Partial output only.',
+  [CODES.AGENT_SHADOWED]:
+    "This repository's .kiro/agents defines an agent under a kiro-bridge name. kiro-cli would run it instead of the installed agent and its permissions, so nothing was sent. Inspect the listed files before trusting this repository.",
 }
 
 export function bridgeError(code, details = {}) {

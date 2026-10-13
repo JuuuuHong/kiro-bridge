@@ -7,7 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **A repository can no longer replace a kiro-bridge agent with its own.**
+  kiro-cli resolves `--agent` against `<cwd>/.kiro/agents` before
+  `~/.kiro/agents`, and the bridge runs with the reviewed repository as cwd, so
+  a checkout shipping `.kiro/agents/kiro-bridge-reviewer.json` could run the
+  "read-only" reviewer with any tools it liked, shell included. Every delegated
+  call now scans that directory, including nested and linked directories,
+  matching case-insensitively on file name and declared `name` across the
+  whole `kiro-bridge-` prefix. A match refuses with `AGENT_SHADOWED` before
+  capability detection or any spawn. kiro-cli documents that workspace agents
+  load only in a trusted workspace, but on kiro-cli 2.30.0 `agent list` in an
+  untrusted temp checkout printed "Agent conflict for kiro-bridge-reviewer.
+  Using workspace version." for both a matching file name and a matching
+  declared `name`. Only the cwd's own `.kiro/agents` was consulted, not a
+  parent's.
+- **Bridge agents no longer pull in a checkout's MCP servers.** Rendered
+  agents set `includeMcpJson: false` and an empty `mcpServers`, so a
+  repository's `.kiro/settings/mcp.json` cannot start a server process of its
+  choosing with the session. Re-run `/kiro-bridge:setup` to apply.
+
 ### Changed
+
+- **The reviewer drops candidates it cannot re-derive.** Before reporting a
+  defect it now looks for the code that makes it a non-issue, and keeps it
+  only with a concrete input, call path and observable outcome in `evidence`.
+  A high or critical risk it cannot rule out is still reported, with
+  confidence below 0.5. Comments and docs in the diff no longer ground a
+  finding on their own. Default mode also tells the reviewer that an empty
+  result is the expected outcome for a typical diff; `--adversarial` keeps its
+  skeptical stance without that line. Re-run `/kiro-bridge:setup` to install
+  the updated reviewer.
 
 - **The spec writer tags each requirement with how it is verified.**
   Requirements are numbered and marked `verify: deterministic`, `rubric` or

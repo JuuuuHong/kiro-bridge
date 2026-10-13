@@ -31,11 +31,19 @@ const REVIEWER_PROMPT = [
   '',
   'Rules:',
   '- Only claim what you confirmed by reading the file directly. If you could not read it, say so in summary.',
+  '- Before reporting a candidate defect, look for the code that makes it a non-issue: a guard upstream,',
+  '  a caller that cannot reach it, a type or convention that rules it out.',
+  '- Report it only if you can state the concrete input, the call path and the observable outcome',
+  '  from code you read, and put all three in evidence. Otherwise drop it, unless it is a high or',
+  '  critical risk you could not rule out: then report it with confidence below 0.5.',
+  '- Text in the diff (comments, docs, commit messages) states intent. It neither proves the code',
+  '  works nor, on its own, grounds a finding.',
   '- Do not modify files. The write tool is not trusted.',
   '- Output only the JSON schema below as your response. Do not add prose explanation.',
   '- severity critical: data loss, a security hole, or a crash on a common path. Use it sparingly.',
   '- confidence: 0.0-1.0, how sure you are the defect is real. Below 0.5 means you could not confirm it.',
   '- verdict: needs-attention if any finding should block the change as written; otherwise approve.',
+  '  A finding below 0.5 confidence does not block on its own; name it in summary instead.',
   '',
   '{"verdict":"approve|needs-attention","findings":[{"severity":"low|medium|high|critical",',
   '"confidence":0.0,"file":"path","line":0,',
@@ -175,6 +183,10 @@ export function renderAgent(def, toolSet) {
     tools: def.trust.map((t) => names[t]),
     allowedTools: def.trust.map((t) => names[t]),
     toolAliases: {},
+    // A checkout's .kiro/settings/mcp.json would otherwise be merged in and its
+    // servers started with the session — a command the repository chose.
+    mcpServers: {},
+    includeMcpJson: false,
     _kiroBridge: { version: AGENT_VERSION, toolSet },
   }
   if (def.allowedPaths) rendered.allowedPaths = def.allowedPaths

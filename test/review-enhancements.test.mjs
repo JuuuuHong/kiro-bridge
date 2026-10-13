@@ -378,3 +378,9 @@ test('runWorker: the agent\'s JSON-RPC message is flattened and capped before it
   assert.ok(!error.includes('\u001b'), 'no escape sequences')
   assert.ok(error.length < 450, 'capped')
 })
+
+test('reviewConstraints: default mode says an empty result is expected, adversarial mode does not', () => {
+  const calibration = /empty findings list .* is the expected result/i
+  assert.ok(reviewConstraints({}).some((c) => calibration.test(c)))
+  assert.ok(!reviewConstraints({ adversarial: true }).some((c) => calibration.test(c)))
+})

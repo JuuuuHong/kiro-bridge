@@ -16,7 +16,14 @@ export const DEFAULT_TIMEOUT_MS = 180_000 // design §8 failure mode table
 
 const DEFAULT_CONSTRAINTS = [
   'Do not modify files — review only.',
-  'Do not claim anything you could not confirm by reading it.',
+  'Do not claim anything you could not confirm by reading it, except a high or critical risk reported with confidence below 0.5.',
+]
+
+// Calibration for the default mode only: a reviewer that believes an empty
+// result is a failure invents findings. Adversarial mode deliberately starts
+// from the opposite assumption, so it does not get this line.
+const CALIBRATION_CONSTRAINTS = [
+  'Most changes are correct. An empty findings list with verdict approve is the expected result for a typical diff; you are not judged on how many findings you report.',
 ]
 
 // Adversarial mode does not relax the read-only, findings-only contract — it
@@ -53,7 +60,7 @@ export function buildReviewGoal({ goal = DEFAULT_GOAL, focus } = {}) {
 export function reviewConstraints({ adversarial = false } = {}) {
   return adversarial
     ? [...DEFAULT_CONSTRAINTS, ...ADVERSARIAL_CONSTRAINTS]
-    : [...DEFAULT_CONSTRAINTS]
+    : [...DEFAULT_CONSTRAINTS, ...CALIBRATION_CONSTRAINTS]
 }
 
 export async function review(options = {}) {

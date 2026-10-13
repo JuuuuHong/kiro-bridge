@@ -174,6 +174,13 @@ not ones you have reformatted. Do not put anything in there you would not send.
   denial to an explicit "insufficient permission" error instead of letting
   it pass as a plausible-looking result (ADR-002).
 - **Shell is never trusted**, in any agent, under any flag.
+- **A checkout cannot swap in its own agent.** kiro-cli looks up `--agent`
+  in the repository's `.kiro/agents` before `~/.kiro/agents`, so a repository
+  shipping a file under a `kiro-bridge-` name would run in place of the
+  installed agent and its permissions. Every delegated call scans that
+  directory first (nested and linked directories included, case-insensitive,
+  by file name and by declared `name`) and refuses with `AGENT_SHADOWED`
+  before anything is spawned.
 - **No path to full trust.** `--trust-all-tools` is never enabled by this
   plugin. Even the explicit `task --write` mode keeps shell untrusted and
   grants only the worker agent's scoped write tools (ADR-002).
